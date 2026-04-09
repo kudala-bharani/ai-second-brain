@@ -336,7 +336,7 @@ export default function MemoryList({ memories, onDelete, onUpdate }: MemoryListP
       )}
 
       {/* Cards */}
-      <div className="flex flex-col gap-2 max-h-[520px] overflow-y-auto pr-0.5">
+      <div className="flex flex-col gap-2 max-h-[420px] overflow-y-auto pr-0.5">
         {filtered.length === 0 && search ? (
           <div className="flex flex-col items-center justify-center rounded-xl border border-dashed py-10 text-center"
             style={{ borderColor: 'rgba(255,255,255,0.07)' }}>

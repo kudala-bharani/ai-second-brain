@@ -170,7 +170,7 @@ export default function AskQuestion({
           </div>
           <span className="hidden sm:block">
             <kbd className="rounded border border-white/10 bg-surface-700 px-1.5 py-0.5 font-mono text-[10px] text-slate-500">
-              ⌘
+              Ctrl/Cmd
             </kbd>
             {' '}+{' '}
             <kbd className="rounded border border-white/10 bg-surface-700 px-1.5 py-0.5 font-mono text-[10px] text-slate-500">

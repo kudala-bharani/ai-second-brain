@@ -5,10 +5,10 @@ export const dynamic = "force-dynamic";
 const LLM_MODELS = (
   process.env.OPENROUTER_MODELS ??
   [
+    "google/gemma-4-26b-a4b-it:free",
     "meta-llama/llama-3.1-8b-instruct:free",
     "mistralai/mistral-7b-instruct:free",
     "google/gemma-2-9b-it:free",
-    "openrouter/auto",
   ].join(",")
 )
   .split(",")
@@ -304,6 +304,20 @@ export async function POST(request: NextRequest) {
           durationMs: Date.now() - startTime,
         },
       };
+
+      await supabase.from("query_history").insert({
+        user_id: user.id,
+        question,
+        answer: result.answer,
+        sources: result.sources,
+        meta: result.meta ?? {},
+        settings: {
+          strictness,
+          maxSources,
+          modelOrder: runtimeModels,
+        },
+      });
+
       return NextResponse.json({ data: result });
     }
 
@@ -319,6 +333,21 @@ export async function POST(request: NextRequest) {
         durationMs: Date.now() - startTime,
       },
     };
+
+    // Persist query history (best effort, non-blocking for user flow).
+    await supabase.from("query_history").insert({
+      user_id: user.id,
+      question,
+      answer: result.answer,
+      sources: result.sources,
+      meta: result.meta ?? {},
+      settings: {
+        strictness,
+        maxSources,
+        modelOrder: runtimeModels,
+      },
+    });
+
     return NextResponse.json({ data: result });
   } catch (err) {
     console.error("[query] unexpected error:", err);

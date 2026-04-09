@@ -54,3 +54,32 @@ $$;
 
 GRANT EXECUTE ON FUNCTION public.match_memories(vector(384), float, int)
   TO authenticated;
+
+-- 4) Query history table (store recent questions per user)
+CREATE TABLE IF NOT EXISTS public.query_history (
+  id          UUID        DEFAULT gen_random_uuid() PRIMARY KEY,
+  user_id     UUID        NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+  question    TEXT        NOT NULL,
+  answer      TEXT        NOT NULL,
+  sources     JSONB       NOT NULL DEFAULT '[]'::jsonb,
+  meta        JSONB       NOT NULL DEFAULT '{}'::jsonb,
+  settings    JSONB       NOT NULL DEFAULT '{}'::jsonb,
+  created_at  TIMESTAMPTZ DEFAULT NOW() NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS query_history_user_id_created_at_idx
+  ON public.query_history (user_id, created_at DESC);
+
+ALTER TABLE public.query_history ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "select_own_query_history"
+  ON public.query_history
+  FOR SELECT
+  TO authenticated
+  USING (auth.uid() = user_id);
+
+CREATE POLICY "insert_own_query_history"
+  ON public.query_history
+  FOR INSERT
+  TO authenticated
+  WITH CHECK (auth.uid() = user_id);

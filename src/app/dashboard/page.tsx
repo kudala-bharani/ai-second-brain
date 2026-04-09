@@ -4,7 +4,6 @@ import { useState, useEffect, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import type { Memory, QueryHistoryItem, QueryResult } from '@/types'
-import { loadLocalJson, saveLocalJson } from '@/lib/storage'
 
 import Header     from '@/components/Header'
 import AddMemory  from '@/components/AddMemory'
@@ -12,7 +11,7 @@ import AskQuestion from '@/components/AskQuestion'
 import AIResponse from '@/components/AIResponse'
 import MemoryList from '@/components/MemoryList'
 
-import { Brain, Sparkles, BookOpen, MessageSquare } from 'lucide-react'
+import { Brain, Sparkles, BookOpen, Tags, History } from 'lucide-react'
 
 // ─── Stat Card ────────────────────────────────────────────────────────────────
 
@@ -141,12 +140,19 @@ export default function DashboardPage() {
   useEffect(() => { fetchMemories() }, [fetchMemories])
 
   useEffect(() => {
-    setQueryHistory(loadLocalJson<QueryHistoryItem[]>('sb_query_history', []))
+    async function fetchQueryHistory() {
+      try {
+        const res = await fetch('/api/query-history')
+        const json = await res.json()
+        if (res.ok && json.data) {
+          setQueryHistory(json.data as QueryHistoryItem[])
+        }
+      } catch (err) {
+        console.error('Failed to fetch query history:', err)
+      }
+    }
+    fetchQueryHistory()
   }, [])
-
-  useEffect(() => {
-    saveLocalJson('sb_query_history', queryHistory.slice(0, 30))
-  }, [queryHistory])
 
   // ── Handlers ──────────────────────────────────────────────────────────────────
 
@@ -173,7 +179,7 @@ export default function DashboardPage() {
         createdAt: new Date().toISOString(),
         settingsSnapshot: {},
       },
-      ...prev,
+      ...prev.slice(0, 9),
     ])
     // Scroll to response on mobile
     setTimeout(() => {
@@ -207,6 +213,8 @@ export default function DashboardPage() {
     (acc, m) => acc + m.content.split(/\s+/).filter(Boolean).length,
     0
   )
+  const taggedMemories = memories.filter((m) => (m.tags?.length ?? 0) > 0).length
+  const recentQuestions = queryHistory.length
 
   return (
     <div className="min-h-screen flex flex-col">
@@ -218,34 +226,34 @@ export default function DashboardPage() {
       <main className="flex-1 mx-auto w-full max-w-7xl px-4 sm:px-6 lg:px-8 py-8">
 
         {/* Stats row */}
-        <div className="mb-8 grid grid-cols-2 gap-3 sm:grid-cols-4 animate-slide-up">
+        <div className="mb-8 grid grid-cols-2 gap-3 sm:grid-cols-2 lg:grid-cols-4 animate-slide-up">
           <StatCard
             icon={<BookOpen className="h-5 w-5 text-brand-400" />}
             label="Memories"
             value={memoryCount}
-            sub={memoryCount === 1 ? '1 note stored' : `${memoryCount} notes stored`}
+            sub={memoryCount === 1 ? '1 memory stored' : `${memoryCount} memories stored`}
             gradient="bg-brand-500/15"
           />
           <StatCard
             icon={<span className="text-lg">📝</span>}
             label="Words stored"
             value={totalWords.toLocaleString()}
-            sub="across all notes"
+            sub="across saved memories"
             gradient="bg-violet-500/15"
           />
           <StatCard
-            icon={<Sparkles className="h-5 w-5 text-amber-400" />}
-            label="AI Model"
-            value="OpenRouter (auto-fallback)"
-            sub="BAAI/bge-small-en-v1.5"
-            gradient="bg-amber-500/15"
+            icon={<Tags className="h-5 w-5 text-emerald-400" />}
+            label="Tagged Notes"
+            value={taggedMemories}
+            sub={memoryCount > 0 ? `${Math.round((taggedMemories / memoryCount) * 100)}% coverage` : 'start tagging memories'}
+            gradient="bg-emerald-500/15"
           />
           <StatCard
-            icon={<MessageSquare className="h-5 w-5 text-emerald-400" />}
-            label="RAG enabled"
-            value="Active"
-            sub="answers from your data"
-            gradient="bg-emerald-500/15"
+            icon={<History className="h-5 w-5 text-cyan-400" />}
+            label="Recent Questions"
+            value={recentQuestions}
+            sub={recentQuestions > 0 ? 'last 10 saved in Supabase' : 'ask your first question'}
+            gradient="bg-cyan-500/15"
           />
         </div>
 

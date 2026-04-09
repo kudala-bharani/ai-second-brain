@@ -13,17 +13,17 @@
 
 ## ✨ Features
 
-| Feature | Description |
-|---|---|
-| 🔐 **Authentication** | Email/password sign-up & login via Supabase Auth |
-| 📝 **Add + Edit Memories** | Create, update, and delete memories with automatic re-embedding |
-| 🏷️ **Tagging** | Add tags to memories and filter your notes by tag/search |
-| 🔍 **Vector Search** | Semantic retrieval using HuggingFace embeddings + pgvector cosine similarity |
-| 🤖 **RAG Q&A** | Ask questions and get answers constrained to your stored notes |
-| 📌 **Source Evidence** | Answers include source notes and evidence snippets with term highlighting |
-| 🕘 **Question History** | Recent queries are saved locally with one-click rerun |
-| 👤 **Multi-user Isolation** | RLS policies ensure each user only accesses their own memories |
-| 🛡️ **Provider Resilience** | OpenRouter model fallback + graceful provider-down response behavior |
+| Feature                     | Description                                                                  |
+| --------------------------- | ---------------------------------------------------------------------------- |
+| 🔐 **Authentication**       | Email/password sign-up & login via Supabase Auth                             |
+| 📝 **Add + Edit Memories**  | Create, update, and delete memories with automatic re-embedding              |
+| 🏷️ **Tagging**              | Add tags to memories and filter your notes by tag/search                     |
+| 🔍 **Vector Search**        | Semantic retrieval using HuggingFace embeddings + pgvector cosine similarity |
+| 🤖 **RAG Q&A**              | Ask questions and get answers constrained to your stored notes               |
+| 📌 **Source Evidence**      | Answers include source notes and evidence snippets with term highlighting    |
+| 🕘 **Question History**     | Recent queries are saved locally with one-click rerun                        |
+| 👤 **Multi-user Isolation** | RLS policies ensure each user only accesses their own memories               |
+| 🛡️ **Provider Resilience**  | OpenRouter model fallback + graceful provider-down response behavior         |
 
 ---
 
@@ -46,16 +46,16 @@ User -> Next.js Frontend (React)
 
 ### Tech Stack
 
-| Layer | Technology |
-|---|---|
-| **Frontend** | Next.js 14 (App Router), React 18, Tailwind CSS |
-| **Backend** | Next.js API Routes |
-| **Auth** | Supabase Auth (email/password) |
-| **Database** | Supabase PostgreSQL |
-| **Vector Store** | Supabase pgvector (cosine similarity) |
-| **Embeddings** | HuggingFace `BAAI/bge-small-en-v1.5` (384 dims) |
-| **LLM Gateway** | OpenRouter |
-| **Deployment** | Vercel |
+| Layer            | Technology                                      |
+| ---------------- | ----------------------------------------------- |
+| **Frontend**     | Next.js 14 (App Router), React 18, Tailwind CSS |
+| **Backend**      | Next.js API Routes                              |
+| **Auth**         | Supabase Auth (email/password)                  |
+| **Database**     | Supabase PostgreSQL                             |
+| **Vector Store** | Supabase pgvector (cosine similarity)           |
+| **Embeddings**   | HuggingFace `BAAI/bge-small-en-v1.5` (384 dims) |
+| **LLM Gateway**  | OpenRouter                                      |
+| **Deployment**   | Vercel                                          |
 
 ### Data Model (Current)
 
@@ -111,12 +111,12 @@ NEXT_PUBLIC_APP_URL=http://localhost:3000
 
 Where to get them:
 
-| Variable | Location |
-|---|---|
-| `NEXT_PUBLIC_SUPABASE_URL` | Supabase Dashboard -> Project Settings -> API |
-| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Supabase Dashboard -> Project Settings -> API (`anon` key) |
-| `OPENROUTER_API_KEY` | [openrouter.ai/keys](https://openrouter.ai/keys) |
-| `HUGGINGFACE_API_KEY` | [huggingface.co/settings/tokens](https://huggingface.co/settings/tokens) |
+| Variable                        | Location                                                                 |
+| ------------------------------- | ------------------------------------------------------------------------ |
+| `NEXT_PUBLIC_SUPABASE_URL`      | Supabase Dashboard -> Project Settings -> API                            |
+| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Supabase Dashboard -> Project Settings -> API (`anon` key)               |
+| `OPENROUTER_API_KEY`            | [openrouter.ai/keys](https://openrouter.ai/keys)                         |
+| `HUGGINGFACE_API_KEY`           | [huggingface.co/settings/tokens](https://huggingface.co/settings/tokens) |
 
 ---
 
@@ -179,14 +179,14 @@ Open [http://localhost:3000](http://localhost:3000)
 
 ## 🧪 Useful API Endpoints
 
-| Route | Purpose |
-|---|---|
-| `GET /api/test-embedding` | Quick provider diagnostics in development |
-| `GET /api/memories` | Fetch user memories |
-| `POST /api/memories` | Create memory (title/content/tags) |
-| `PATCH /api/memories/:id` | Edit memory + re-embed |
-| `DELETE /api/memories/:id` | Delete memory |
-| `POST /api/query` | Ask grounded question |
+| Route                      | Purpose                                   |
+| -------------------------- | ----------------------------------------- |
+| `GET /api/test-embedding`  | Quick provider diagnostics in development |
+| `GET /api/memories`        | Fetch user memories                       |
+| `POST /api/memories`       | Create memory (title/content/tags)        |
+| `PATCH /api/memories/:id`  | Edit memory + re-embed                    |
+| `DELETE /api/memories/:id` | Delete memory                             |
+| `POST /api/query`          | Ask grounded question                     |
 
 ---
 
@@ -213,7 +213,7 @@ Set these environment variables in Vercel project settings:
 
 ## 📄 License
 
-MIT (or your preferred license).
+MIT
 
 ---
 
