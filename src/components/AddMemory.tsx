@@ -22,6 +22,7 @@ const MAX_TITLE_LENGTH   = 120
 export default function AddMemory({ onMemoryAdded }: AddMemoryProps) {
   const [title,   setTitle]   = useState('')
   const [content, setContent] = useState('')
+  const [tagsInput, setTagsInput] = useState('')
   const [status,  setStatus]  = useState<FormStatus>('idle')
   const [error,   setError]   = useState<string | null>(null)
 
@@ -56,6 +57,7 @@ export default function AddMemory({ onMemoryAdded }: AddMemoryProps) {
         body:    JSON.stringify({
           title:   title.trim()   || undefined,
           content: content.trim(),
+          tags: tagsInput.split(',').map((t) => t.trim().toLowerCase()).filter(Boolean),
         }),
       })
 
@@ -69,6 +71,7 @@ export default function AddMemory({ onMemoryAdded }: AddMemoryProps) {
       onMemoryAdded(json.data as Memory)
       setTitle('')
       setContent('')
+      setTagsInput('')
       setStatus('success')
 
       // Reset textarea height
@@ -90,6 +93,7 @@ export default function AddMemory({ onMemoryAdded }: AddMemoryProps) {
   function handleClear() {
     setTitle('')
     setContent('')
+    setTagsInput('')
     setError(null)
     setStatus('idle')
     if (textareaRef.current) textareaRef.current.style.height = 'auto'
@@ -207,6 +211,23 @@ export default function AddMemory({ onMemoryAdded }: AddMemoryProps) {
             Content exceeds the {MAX_CONTENT_LENGTH.toLocaleString()}-character limit.
           </p>
         )}
+      </div>
+
+      {/* ── Tags field ── */}
+      <div>
+        <label htmlFor="memory-tags" className="label">
+          Tags
+          <span className="ml-1 font-normal normal-case tracking-normal text-slate-600">(optional, comma separated)</span>
+        </label>
+        <input
+          id="memory-tags"
+          type="text"
+          value={tagsInput}
+          onChange={(e) => setTagsInput(e.target.value)}
+          placeholder="work, ideas, research"
+          className="input"
+          disabled={status === 'loading'}
+        />
       </div>
 
       {/* ── Tip ── */}

@@ -235,6 +235,27 @@ function inlineMarkdown(text: string): React.ReactNode {
   return parts.length === 1 ? parts[0] : <>{parts}</>
 }
 
+function renderHighlightedText(text: string, terms: string[]): React.ReactNode {
+  if (!terms.length) return text
+  const escaped = terms.map((t) => t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
+  const regex = new RegExp(`\\b(${escaped.join("|")})\\b`, "i")
+  const splitRegex = new RegExp(`\\b(${escaped.join("|")})\\b`, "gi")
+  const parts = text.split(splitRegex)
+  return (
+    <>
+      {parts.map((part, idx) =>
+        regex.test(part) ? (
+          <mark key={idx} className="rounded bg-amber-500/20 px-0.5 text-amber-200">
+            {part}
+          </mark>
+        ) : (
+          <span key={idx}>{part}</span>
+        )
+      )}
+    </>
+  )
+}
+
 // ─── Source Card ──────────────────────────────────────────────────────────────
 
 function SourceCard({
@@ -246,6 +267,8 @@ function SourceCard({
 }) {
   const [expanded, setExpanded] = useState(false)
   const preview = source.content.slice(0, 180)
+  const snippet = source.evidence_snippet?.trim() || preview
+  const terms = source.evidence_terms ?? []
   const isLong  = source.content.length > 180
 
   const similarityPct = Math.round((source.similarity ?? 0) * 100)
@@ -296,9 +319,9 @@ function SourceCard({
         </span>
       </div>
 
-      {/* Content preview */}
+      {/* Evidence snippet / content preview */}
       <p className="mt-2.5 text-xs leading-relaxed text-slate-500">
-        {expanded ? source.content : preview}
+        {expanded ? source.content : renderHighlightedText(snippet, terms)}
         {!expanded && isLong && '…'}
       </p>
 
@@ -375,6 +398,7 @@ export default function AIResponse({ result, question, onClear }: AIResponseProp
 
   const { answer, sources } = result
   const hasNoSources = !sources || sources.length === 0
+  const meta = result.meta
 
   // ── Copy answer to clipboard ──────────────────────────────────────────────
   async function handleCopy() {
@@ -413,6 +437,9 @@ export default function AIResponse({ result, question, onClear }: AIResponseProp
             <span className="text-xs font-semibold uppercase tracking-widest text-slate-500">
               AI Answer
             </span>
+            {meta?.modelUsed && (
+              <span className="badge-slate text-[10px] px-1.5 py-0.5">{meta.modelUsed}</span>
+            )}
           </div>
           <div className="flex items-center gap-2">
             {/* Grounded badge */}

@@ -5,6 +5,7 @@ export interface Memory {
   user_id: string
   title: string | null
   content: string
+  tags?: string[]
   created_at: string
 }
 
@@ -12,11 +13,36 @@ export interface Memory {
 
 export interface MemoryMatch extends Memory {
   similarity: number
+  evidence_snippet?: string
+  evidence_terms?: string[]
 }
 
 export interface QueryResult {
   answer: string
   sources: MemoryMatch[]
+  meta?: QueryMeta
+}
+
+export interface QueryMeta {
+  modelUsed?: string
+  retrievalCount?: number
+  strictness?: number
+  maxSources?: number
+  durationMs?: number
+}
+
+export interface QueryControls {
+  strictness?: number // 0..1
+  maxSources?: number // 1..10
+  modelOrder?: string[]
+}
+
+export interface QueryHistoryItem {
+  id: string
+  question: string
+  result: QueryResult
+  createdAt: string
+  settingsSnapshot: QueryControls
 }
 
 // ─── API Responses ────────────────────────────────────────────────────────────

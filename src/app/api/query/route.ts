@@ -18,7 +18,7 @@ const LLM_MODELS = (
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { generateEmbedding, openai } from "@/lib/openai";
-import type { MemoryMatch, QueryResult } from "@/types";
+import type { MemoryMatch, QueryControls, QueryResult } from "@/types";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -51,6 +51,24 @@ function buildUserPrompt(question: string, contextBlocks: string[]): string {
     .join("\n\n");
 
   return `## Context Notes\n\n${contextSection}\n\n## Question\n\n${question}`;
+}
+
+function clamp(num: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, num));
+}
+
+function extractEvidenceSnippet(content: string, terms: string[]): string {
+  if (!content) return "";
+  const lower = content.toLowerCase();
+  let idx = -1;
+  for (const term of terms) {
+    idx = lower.indexOf(term);
+    if (idx !== -1) break;
+  }
+  if (idx === -1) return content.slice(0, 220).trim();
+  const start = Math.max(0, idx - 70);
+  const end = Math.min(content.length, idx + 180);
+  return content.slice(start, end).trim();
 }
 
 function buildProviderFallbackAnswer(sources: MemoryMatch[]): string {
@@ -113,7 +131,7 @@ export async function POST(request: NextRequest) {
     }
 
     // ── 2. Parse + validate request body ────────────────────────────────────
-    let body: { question?: string };
+    let body: { question?: string; controls?: QueryControls };
     try {
       body = await request.json();
     } catch {
@@ -137,7 +155,16 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    const controls = body.controls ?? {};
+    const strictness = clamp(controls.strictness ?? 0.45, 0.1, 0.95);
+    const maxSources = Math.round(clamp(controls.maxSources ?? MATCH_COUNT, 1, 10));
+    const runtimeModels =
+      controls.modelOrder && controls.modelOrder.length > 0
+        ? controls.modelOrder.map((m) => m.trim()).filter(Boolean)
+        : LLM_MODELS;
+
     // ── 3. Generate embedding for the question ───────────────────────────────
+    const startTime = Date.now();
     let queryEmbedding: number[];
     try {
       queryEmbedding = await generateEmbedding(question);
@@ -154,10 +181,9 @@ export async function POST(request: NextRequest) {
       "match_memories",
       {
         query_embedding: queryEmbedding,
-        match_threshold: MATCH_THRESHOLD,
-        match_count: MATCH_COUNT,
-        user_id_filter: user.id,
-      },
+        match_threshold: strictness,
+        match_count: maxSources,
+      }
     );
 
     if (rpcError) {
@@ -202,11 +228,12 @@ export async function POST(request: NextRequest) {
     // ── 7. Call LLM ──────────────────────────────────────────────────────────
     let answer: string;
     let usedSources: MemoryMatch[] = sources;
+    let modelUsed: string | undefined;
     try {
       let lastError: unknown = null;
       answer = "";
 
-      for (const model of LLM_MODELS) {
+      for (const model of runtimeModels) {
         try {
           const completion = await openai.chat.completions.create({
             model,
@@ -228,6 +255,7 @@ export async function POST(request: NextRequest) {
           if (!answer) {
             throw new Error(`Empty response from model ${model}`);
           }
+          modelUsed = model;
           console.log(`[query] generated answer using model: ${model}`);
           break;
         } catch (modelErr) {
@@ -250,17 +278,47 @@ export async function POST(request: NextRequest) {
         // If the model omitted citations, prefer tighter source display.
         usedSources = sources.slice(0, Math.min(2, sources.length));
       }
+
+      const terms = question
+        .toLowerCase()
+        .split(/\W+/)
+        .filter((t) => t.length >= 4)
+        .slice(0, 8);
+      usedSources = usedSources.map((s) => ({
+        ...s,
+        evidence_terms: terms,
+        evidence_snippet: extractEvidenceSnippet(s.content, terms),
+      }));
     } catch (err) {
       console.error("[query] LLM call failed:", err);
       const result: QueryResult = {
         answer: buildProviderFallbackAnswer(sources),
-        sources: sources.slice(0, Math.min(3, sources.length)),
+        sources: sources.slice(0, Math.min(3, sources.length)).map((s) => ({
+          ...s,
+          evidence_snippet: s.content.slice(0, 220),
+        })),
+        meta: {
+          retrievalCount: sources.length,
+          strictness,
+          maxSources,
+          durationMs: Date.now() - startTime,
+        },
       };
       return NextResponse.json({ data: result });
     }
 
     // ── 8. Return answer + sources ───────────────────────────────────────────
-    const result: QueryResult = { answer, sources: usedSources };
+    const result: QueryResult = {
+      answer,
+      sources: usedSources,
+      meta: {
+        modelUsed,
+        retrievalCount: sources.length,
+        strictness,
+        maxSources,
+        durationMs: Date.now() - startTime,
+      },
+    };
     return NextResponse.json({ data: result });
   } catch (err) {
     console.error("[query] unexpected error:", err);

@@ -25,6 +25,7 @@ CREATE TABLE IF NOT EXISTS public.memories (
   user_id     UUID        NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
   title       TEXT,
   content     TEXT        NOT NULL,
+  tags        TEXT[]      NOT NULL DEFAULT '{}',
   embedding   vector(384),           -- BAAI/bge-small-en-v1.5 = 384 dimensions
   created_at  TIMESTAMPTZ DEFAULT NOW() NOT NULL
 );
@@ -65,7 +66,12 @@ CREATE POLICY "delete_own_memories"
   TO authenticated
   USING (auth.uid() = user_id);
 
--- No UPDATE policy intentionally — memories are immutable once saved
+CREATE POLICY "update_own_memories"
+  ON public.memories
+  FOR UPDATE
+  TO authenticated
+  USING (auth.uid() = user_id)
+  WITH CHECK (auth.uid() = user_id);
 
 
 -- ------------------------------------------------------------
@@ -76,14 +82,14 @@ CREATE POLICY "delete_own_memories"
 CREATE OR REPLACE FUNCTION public.match_memories(
   query_embedding   vector(384),     -- must match table column dimensions
   match_threshold   float,           -- minimum similarity score (0–1), e.g. 0.45
-  match_count       int,             -- max rows to return, e.g. 5
-  user_id_filter    uuid             -- restrict results to this user
+  match_count       int              -- max rows to return, e.g. 5
 )
 RETURNS TABLE (
   id          uuid,
   user_id     uuid,
   title       text,
   content     text,
+  tags        text[],
   created_at  timestamptz,
   similarity  float
 )
@@ -96,10 +102,11 @@ AS $$
     m.user_id,
     m.title,
     m.content,
+    m.tags,
     m.created_at,
     1 - (m.embedding <=> query_embedding) AS similarity
   FROM  public.memories m
-  WHERE m.user_id = user_id_filter
+  WHERE m.user_id = auth.uid()
     AND m.embedding IS NOT NULL
     AND 1 - (m.embedding <=> query_embedding) > match_threshold
   ORDER BY m.embedding <=> query_embedding
@@ -110,5 +117,5 @@ $$;
 -- ------------------------------------------------------------
 -- 4. Grant execution rights on the RPC function
 -- ------------------------------------------------------------
-GRANT EXECUTE ON FUNCTION public.match_memories(vector(384), float, int, uuid)
+GRANT EXECUTE ON FUNCTION public.match_memories(vector(384), float, int)
   TO authenticated;

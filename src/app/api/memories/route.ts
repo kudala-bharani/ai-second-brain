@@ -9,7 +9,7 @@ export const dynamic = "force-dynamic";
 // ─── GET /api/memories ────────────────────────────────────────────────────────
 // Returns all memories for the currently authenticated user, newest first.
 
-export async function GET() {
+export async function GET(request: NextRequest) {
   try {
     const supabase = createClient();
 
@@ -22,11 +22,31 @@ export async function GET() {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    const { data, error } = await supabase
+    const params = request.nextUrl.searchParams;
+    const search = params.get("search")?.trim();
+    const tag = params.get("tag")?.trim();
+    const startDate = params.get("startDate")?.trim();
+    const endDate = params.get("endDate")?.trim();
+
+    let query = supabase
       .from("memories")
-      .select("id, user_id, title, content, created_at")
-      .eq("user_id", user.id)
-      .order("created_at", { ascending: false });
+      .select("id, user_id, title, content, tags, created_at")
+      .eq("user_id", user.id);
+
+    if (search) {
+      query = query.or(`title.ilike.%${search}%,content.ilike.%${search}%`);
+    }
+    if (tag) {
+      query = query.contains("tags", [tag]);
+    }
+    if (startDate) {
+      query = query.gte("created_at", startDate);
+    }
+    if (endDate) {
+      query = query.lte("created_at", endDate);
+    }
+
+    const { data, error } = await query.order("created_at", { ascending: false });
 
     if (error) {
       console.error("[GET /api/memories] Supabase error:", error);
@@ -66,7 +86,7 @@ export async function POST(request: NextRequest) {
     }
 
     // ── Parse + validate body ──────────────────────────────────────────────────
-    let body: { title?: string; content?: string };
+    let body: { title?: string; content?: string; tags?: string[] };
     try {
       body = await request.json();
     } catch {
@@ -78,6 +98,10 @@ export async function POST(request: NextRequest) {
 
     const content = body.content?.trim();
     const title = body.title?.trim() || null;
+    const tags = (body.tags ?? [])
+      .map((t) => t.trim().toLowerCase())
+      .filter(Boolean)
+      .slice(0, 10);
 
     if (!content || content.length === 0) {
       return NextResponse.json(
@@ -121,9 +145,10 @@ export async function POST(request: NextRequest) {
         user_id: user.id,
         title,
         content,
+        tags,
         embedding: JSON.stringify(embedding), // pgvector accepts a JSON array string
       })
-      .select("id, user_id, title, content, created_at")
+      .select("id, user_id, title, content, tags, created_at")
       .single();
 
     if (error) {

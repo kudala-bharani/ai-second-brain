@@ -3,7 +3,8 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
-import type { Memory, QueryResult } from '@/types'
+import type { Memory, QueryHistoryItem, QueryResult } from '@/types'
+import { loadLocalJson, saveLocalJson } from '@/lib/storage'
 
 import Header     from '@/components/Header'
 import AddMemory  from '@/components/AddMemory'
@@ -111,6 +112,9 @@ export default function DashboardPage() {
   const [loadingMem, setLoadingMem] = useState(true)
   const [queryResult, setQueryResult] = useState<QueryResult | null>(null)
   const [activeQuery,  setActiveQuery]  = useState<string>('')
+  const [queryHistory, setQueryHistory] = useState<QueryHistoryItem[]>([])
+  const [prefillQuestion, setPrefillQuestion] = useState('')
+  const [autoSubmitNonce, setAutoSubmitNonce] = useState(0)
 
   // ── Fetch user ───────────────────────────────────────────────────────────────
   useEffect(() => {
@@ -136,6 +140,14 @@ export default function DashboardPage() {
 
   useEffect(() => { fetchMemories() }, [fetchMemories])
 
+  useEffect(() => {
+    setQueryHistory(loadLocalJson<QueryHistoryItem[]>('sb_query_history', []))
+  }, [])
+
+  useEffect(() => {
+    saveLocalJson('sb_query_history', queryHistory.slice(0, 30))
+  }, [queryHistory])
+
   // ── Handlers ──────────────────────────────────────────────────────────────────
 
   function handleMemoryAdded(memory: Memory) {
@@ -153,6 +165,16 @@ export default function DashboardPage() {
   function handleQueryResult(result: QueryResult, question: string) {
     setQueryResult(result)
     setActiveQuery(question)
+    setQueryHistory((prev) => [
+      {
+        id: crypto.randomUUID(),
+        question,
+        result,
+        createdAt: new Date().toISOString(),
+        settingsSnapshot: {},
+      },
+      ...prev,
+    ])
     // Scroll to response on mobile
     setTimeout(() => {
       document.getElementById('ai-response-section')?.scrollIntoView({
@@ -165,6 +187,10 @@ export default function DashboardPage() {
   function handleClearResult() {
     setQueryResult(null)
     setActiveQuery('')
+  }
+
+  function handleMemoryUpdated(memory: Memory) {
+    setMemories((prev) => prev.map((m) => (m.id === memory.id ? memory : m)))
   }
 
   // ── Logout ────────────────────────────────────────────────────────────────────
@@ -264,6 +290,7 @@ export default function DashboardPage() {
                 <MemoryList
                   memories={memories}
                   onDelete={handleMemoryDeleted}
+                  onUpdate={handleMemoryUpdated}
                 />
               )}
             </section>
@@ -295,6 +322,8 @@ export default function DashboardPage() {
               <AskQuestion
                 hasMemories={memoryCount > 0}
                 onResult={handleQueryResult}
+                prefillQuestion={prefillQuestion}
+                autoSubmitNonce={autoSubmitNonce}
               />
               <div className="divider" />
               <AIResponse
@@ -302,6 +331,25 @@ export default function DashboardPage() {
                 question={activeQuery}
                 onClear={handleClearResult}
               />
+              {queryHistory.length > 0 && (
+                <div className="mt-4 space-y-2">
+                  <p className="text-xs uppercase tracking-widest text-slate-500">Recent Questions</p>
+                  <div className="max-h-44 overflow-y-auto space-y-1">
+                    {queryHistory.map((item) => (
+                      <button
+                        key={item.id}
+                        onClick={() => {
+                          setPrefillQuestion(item.question)
+                          setAutoSubmitNonce((n) => n + 1)
+                        }}
+                        className="w-full rounded-lg border border-white/10 px-3 py-2 text-left text-xs text-slate-300 hover:bg-surface-700"
+                      >
+                        {item.question}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
             </section>
           </div>
         </div>

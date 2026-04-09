@@ -1,12 +1,14 @@
 'use client'
 
-import { useState, useRef, type FormEvent, type KeyboardEvent } from 'react'
+import { useEffect, useState, useRef, type FormEvent, type KeyboardEvent } from 'react'
 import { Sparkles, Loader2, SendHorizonal, AlertCircle, LightbulbIcon } from 'lucide-react'
 import type { QueryResult } from '@/types'
 
 interface AskQuestionProps {
   hasMemories: boolean
   onResult: (result: QueryResult, question: string) => void
+  prefillQuestion?: string
+  autoSubmitNonce?: number
 }
 
 const EXAMPLE_QUESTIONS = [
@@ -16,8 +18,15 @@ const EXAMPLE_QUESTIONS = [
   'What tasks or goals have I written about?',
 ]
 
-export default function AskQuestion({ hasMemories, onResult }: AskQuestionProps) {
+export default function AskQuestion({
+  hasMemories,
+  onResult,
+  prefillQuestion,
+  autoSubmitNonce,
+}: AskQuestionProps) {
   const [question, setQuestion]   = useState('')
+  const [lastAutoNonce, setLastAutoNonce] = useState<number | undefined>(undefined)
+
   const [loading,  setLoading]    = useState(false)
   const [error,    setError]      = useState<string | null>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
@@ -67,6 +76,19 @@ export default function AskQuestion({ hasMemories, onResult }: AskQuestionProps)
     setError(null)
     textareaRef.current?.focus()
   }
+
+  useEffect(() => {
+    if (prefillQuestion && prefillQuestion !== question && !loading) {
+      setQuestion(prefillQuestion)
+    }
+  }, [prefillQuestion, question, loading])
+
+  useEffect(() => {
+    if (autoSubmitNonce !== undefined && autoSubmitNonce !== lastAutoNonce && !loading) {
+      setLastAutoNonce(autoSubmitNonce)
+      handleSubmit()
+    }
+  }, [autoSubmitNonce, lastAutoNonce, loading])
 
   // ─────────────────────────────────────────────────────────────────────────────
   return (

@@ -2,7 +2,7 @@
 
 import { useState } from 'react'
 import { formatDistanceToNow } from 'date-fns'
-import { Trash2, FileText, Clock, Loader2, ChevronDown, ChevronUp } from 'lucide-react'
+import { Trash2, FileText, Clock, Loader2, ChevronDown, ChevronUp, Pencil, Save, X } from 'lucide-react'
 import type { Memory } from '@/types'
 
 // ─── Memory Card ──────────────────────────────────────────────────────────────
@@ -10,12 +10,18 @@ import type { Memory } from '@/types'
 interface MemoryCardProps {
   memory: Memory
   onDelete: (id: string) => void
+  onUpdate: (memory: Memory) => void
 }
 
-function MemoryCard({ memory, onDelete }: MemoryCardProps) {
+function MemoryCard({ memory, onDelete, onUpdate }: MemoryCardProps) {
   const [deleting,  setDeleting]  = useState(false)
   const [expanded,  setExpanded]  = useState(false)
   const [showConfirm, setShowConfirm] = useState(false)
+  const [editing, setEditing] = useState(false)
+  const [saving, setSaving] = useState(false)
+  const [title, setTitle] = useState(memory.title ?? '')
+  const [content, setContent] = useState(memory.content)
+  const [tagsInput, setTagsInput] = useState((memory.tags ?? []).join(', '))
 
   const PREVIEW_LENGTH = 160
 
@@ -28,6 +34,33 @@ function MemoryCard({ memory, onDelete }: MemoryCardProps) {
 
   // Word count
   const wordCount = memory.content.split(/\s+/).filter(Boolean).length
+
+  async function handleSaveEdit() {
+    setSaving(true)
+    try {
+      const tags = tagsInput
+        .split(',')
+        .map((t) => t.trim().toLowerCase())
+        .filter(Boolean)
+      const res = await fetch(`/api/memories/${memory.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          title: title.trim() || null,
+          content: content.trim(),
+          tags,
+        }),
+      })
+      const json = await res.json()
+      if (!res.ok || json.error) throw new Error(json.error ?? 'Failed to update')
+      onUpdate(json.data as Memory)
+      setEditing(false)
+    } catch (err) {
+      console.error('Update error:', err)
+    } finally {
+      setSaving(false)
+    }
+  }
 
   async function handleDelete() {
     if (!showConfirm) {
@@ -138,11 +171,61 @@ function MemoryCard({ memory, onDelete }: MemoryCardProps) {
         </div>
       </div>
 
-      {/* ── Content preview ── */}
+      {/* ── Content preview / edit ── */}
       <div className="pl-9">
-        <p className="text-sm text-slate-400 leading-relaxed whitespace-pre-wrap break-words">
-          {previewText}
-        </p>
+        {editing ? (
+          <div className="space-y-2">
+            <input
+              value={title}
+              onChange={(e) => setTitle(e.target.value)}
+              className="input py-2"
+              placeholder="Title"
+            />
+            <textarea
+              value={content}
+              onChange={(e) => setContent(e.target.value)}
+              className="textarea"
+              rows={4}
+            />
+            <input
+              value={tagsInput}
+              onChange={(e) => setTagsInput(e.target.value)}
+              className="input py-2"
+              placeholder="tags (comma separated)"
+            />
+            <div className="flex gap-2">
+              <button onClick={handleSaveEdit} disabled={saving} className="btn btn-primary btn-sm">
+                {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
+                Save
+              </button>
+              <button
+                onClick={() => {
+                  setEditing(false)
+                  setTitle(memory.title ?? '')
+                  setContent(memory.content)
+                  setTagsInput((memory.tags ?? []).join(', '))
+                }}
+                className="btn btn-ghost btn-sm"
+              >
+                <X className="h-3.5 w-3.5" />
+                Cancel
+              </button>
+            </div>
+          </div>
+        ) : (
+          <>
+            <p className="text-sm text-slate-400 leading-relaxed whitespace-pre-wrap break-words">
+              {previewText}
+            </p>
+            {!!memory.tags?.length && (
+              <div className="mt-2 flex flex-wrap gap-1.5">
+                {memory.tags.map((tag) => (
+                  <span key={tag} className="badge-slate text-[10px] px-1.5 py-0.5">#{tag}</span>
+                ))}
+              </div>
+            )}
+          </>
+        )}
 
         {needsExpand && (
           <button
@@ -165,6 +248,16 @@ function MemoryCard({ memory, onDelete }: MemoryCardProps) {
         )}
       </div>
 
+      {!editing && (
+        <button
+          onClick={() => setEditing(true)}
+          className="absolute bottom-3 right-3 rounded-lg p-1.5 text-slate-600 hover:text-slate-300 hover:bg-surface-600"
+          aria-label="Edit memory"
+        >
+          <Pencil className="h-3.5 w-3.5" />
+        </button>
+      )}
+
       {/* Deleting overlay */}
       {deleting && (
         <div className="absolute inset-0 flex items-center justify-center rounded-xl">
@@ -183,25 +276,31 @@ function MemoryCard({ memory, onDelete }: MemoryCardProps) {
 interface MemoryListProps {
   memories: Memory[]
   onDelete: (id: string) => void
+  onUpdate: (memory: Memory) => void
 }
 
-export default function MemoryList({ memories, onDelete }: MemoryListProps) {
+export default function MemoryList({ memories, onDelete, onUpdate }: MemoryListProps) {
   const [search, setSearch] = useState('')
+  const [tagFilter, setTagFilter] = useState('')
 
-  const filtered = search.trim()
-    ? memories.filter(
-        (m) =>
-          m.content.toLowerCase().includes(search.toLowerCase()) ||
-          (m.title ?? '').toLowerCase().includes(search.toLowerCase())
-      )
-    : memories
+  const filtered = memories.filter((m) => {
+    const matchesSearch = search.trim()
+      ? m.content.toLowerCase().includes(search.toLowerCase()) ||
+        (m.title ?? '').toLowerCase().includes(search.toLowerCase())
+      : true
+    const matchesTag = tagFilter.trim()
+      ? (m.tags ?? []).some((t) => t.includes(tagFilter.toLowerCase()))
+      : true
+    return matchesSearch && matchesTag
+  })
 
   return (
     <div className="flex flex-col gap-3">
 
-      {/* Search */}
-      {memories.length > 2 && (
-        <div className="relative mb-1">
+      {/* Filters */}
+      {memories.length > 0 && (
+        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+          <div className="relative mb-1">
           <svg
             className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-600"
             fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24"
@@ -215,6 +314,14 @@ export default function MemoryList({ memories, onDelete }: MemoryListProps) {
             onChange={(e) => setSearch(e.target.value)}
             placeholder="Search your notes…"
             className="input pl-9 py-2 text-xs"
+          />
+          </div>
+          <input
+            type="search"
+            value={tagFilter}
+            onChange={(e) => setTagFilter(e.target.value)}
+            placeholder="Filter by tag…"
+            className="input py-2 text-xs"
           />
         </div>
       )}
@@ -248,7 +355,7 @@ export default function MemoryList({ memories, onDelete }: MemoryListProps) {
               className="animate-slide-up"
               style={{ animationDelay: `${Math.min(i * 40, 200)}ms` }}
             >
-              <MemoryCard memory={memory} onDelete={onDelete} />
+              <MemoryCard memory={memory} onDelete={onDelete} onUpdate={onUpdate} />
             </div>
           ))
         )}

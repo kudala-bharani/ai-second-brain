@@ -2,6 +2,30 @@
 
 > A full-stack RAG-powered personal knowledge base. Store your notes, ask questions, and get AI answers grounded **exclusively** in your own data.
 
+## Upgrade Notes (Current)
+
+- Unified Q&A panel (question input + answer + sources in one section)
+- Runtime query controls in UI:
+  - strictness slider
+  - max source count
+  - model order override (comma-separated OpenRouter models)
+- Source evidence snippets with term highlighting
+- Editable memories (`PATCH /api/memories/:id`) with automatic re-embedding
+- Memory tags support + tag/date/text filtering
+- Local persistent query settings and recent question history with rerun
+
+### Required migration for these features
+
+Run:
+
+- `supabase/migration_feature_upgrade.sql`
+
+This adds:
+
+- `tags` column on `memories`
+- update policy for editing memories
+- hardened `match_memories` function bound to `auth.uid()`
+
 ![Next.js](https://img.shields.io/badge/Next.js-14-black?style=flat-square&logo=next.js)
 ![Supabase](https://img.shields.io/badge/Supabase-pgvector-3ECF8E?style=flat-square&logo=supabase)
 ![OpenAI](https://img.shields.io/badge/OpenAI-GPT--4o--mini-412991?style=flat-square&logo=openai)
