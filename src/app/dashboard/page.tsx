@@ -202,7 +202,7 @@ export default function DashboardPage() {
   // ── Logout ────────────────────────────────────────────────────────────────────
   async function handleLogout() {
     await supabase.auth.signOut()
-    router.push('/auth/login')
+    router.push('/')
     router.refresh()
   }
 

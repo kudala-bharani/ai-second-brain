@@ -22,7 +22,7 @@ export default function Header({ userEmail, onLogout }: HeaderProps) {
       await onLogout();
     } else {
       await supabase.auth.signOut();
-      router.push("/auth/login");
+      router.push("/");
       router.refresh();
     }
     setLoggingOut(false);
