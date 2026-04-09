@@ -1,6 +1,8 @@
 # 🧠 AI Second Brain
 
-> A full-stack RAG-powered personal knowledge base. Store notes, edit and organize them, then ask questions and get answers grounded in your own data.
+> 🚀 A production-ready RAG-based AI system that enables users to store, retrieve, and query personal knowledge using semantic search and LLMs.
+
+🔗 **Live Demo:** https://ai-second-brain-beige.vercel.app/
 
 ![Next.js](https://img.shields.io/badge/Next.js-14-black?style=flat-square&logo=next.js)
 ![Supabase](https://img.shields.io/badge/Supabase-pgvector-3ECF8E?style=flat-square&logo=supabase)
