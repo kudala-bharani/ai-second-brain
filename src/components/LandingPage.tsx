@@ -73,9 +73,31 @@ const STEPS = [
   },
 ];
 
-export default function LandingPage() {
+type LandingPageProps = {
+  /** Shown when Supabase URL/anon key are missing on the server (e.g. Vercel env not set). */
+  showConfigWarning?: boolean;
+};
+
+export default function LandingPage({ showConfigWarning }: LandingPageProps) {
   return (
     <div className="min-h-screen flex flex-col">
+      {showConfigWarning ? (
+        <div
+          role="alert"
+          className="border-b border-amber-500/40 bg-amber-500/15 px-4 py-3 text-center text-sm text-amber-100"
+        >
+          <strong className="font-semibold">Deployment configuration:</strong> Add{" "}
+          <code className="rounded bg-black/30 px-1.5 py-0.5 text-xs">
+            NEXT_PUBLIC_SUPABASE_URL
+          </code>{" "}
+          and{" "}
+          <code className="rounded bg-black/30 px-1.5 py-0.5 text-xs">
+            NEXT_PUBLIC_SUPABASE_ANON_KEY
+          </code>{" "}
+          in Vercel → Project → Settings → Environment Variables (Production), then
+          redeploy. Login and the app need these values.
+        </div>
+      ) : null}
       <header className="border-b border-white/[0.07] bg-surface-900/80 backdrop-blur-xl">
         <div className="mx-auto flex h-16 max-w-6xl items-center justify-between px-4 sm:px-6">
           <div className="flex items-center gap-2.5">

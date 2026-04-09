@@ -1,6 +1,7 @@
 import { redirect } from "next/navigation";
 import type { Metadata } from "next";
 import { createClient } from "@/lib/supabase/server";
+import { getSupabasePublicEnv } from "@/lib/supabase/public-env";
 import LandingPage from "@/components/LandingPage";
 
 export const dynamic = "force-dynamic";
@@ -13,13 +14,20 @@ export const metadata: Metadata = {
 };
 
 export default async function RootPage() {
-  const supabase = createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  const env = getSupabasePublicEnv();
 
-  if (user) {
-    redirect("/dashboard");
+  if (!env) {
+    return <LandingPage showConfigWarning />;
+  }
+
+  try {
+    const supabase = createClient();
+    const { data, error } = await supabase.auth.getUser();
+    if (!error && data.user) {
+      redirect("/dashboard");
+    }
+  } catch {
+    // Invalid cookies or transient Supabase errors: still show marketing page
   }
 
   return <LandingPage />;
