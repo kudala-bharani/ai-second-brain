@@ -44,6 +44,7 @@ export async function middleware(request: NextRequest) {
 
   // Redirect unauthenticated users away from protected routes
   const isAuthRoute = pathname.startsWith("/auth");
+  const isLanding = pathname === "/";
   const isApiRoute = pathname.startsWith("/api");
   const isPublicAsset =
     pathname.startsWith("/_next") ||
@@ -54,7 +55,8 @@ export async function middleware(request: NextRequest) {
     return supabaseResponse;
   }
 
-  if (!user && !isAuthRoute) {
+  // Public marketing landing for guests; dashboard and other app routes stay protected
+  if (!user && !isAuthRoute && !isLanding) {
     const url = request.nextUrl.clone();
     url.pathname = "/auth/login";
     url.searchParams.set("redirectedFrom", pathname);
@@ -77,9 +79,5 @@ export async function middleware(request: NextRequest) {
 }
 
 export const config = {
-  matcher: [
-    "/",
-    "/dashboard/:path*",
-    "/auth/:path*",
-  ],
+  matcher: ["/", "/dashboard/:path*", "/auth/:path*"],
 };

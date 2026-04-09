@@ -5,10 +5,10 @@ export const dynamic = "force-dynamic";
 const LLM_MODELS = (
   process.env.OPENROUTER_MODELS ??
   [
-    "google/gemma-4-26b-a4b-it:free",
     "meta-llama/llama-3.1-8b-instruct:free",
     "mistralai/mistral-7b-instruct:free",
     "google/gemma-2-9b-it:free",
+    "openrouter/auto",
   ].join(",")
 )
   .split(",")

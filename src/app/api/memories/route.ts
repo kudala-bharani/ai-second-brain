@@ -46,7 +46,9 @@ export async function GET(request: NextRequest) {
       query = query.lte("created_at", endDate);
     }
 
-    const { data, error } = await query.order("created_at", { ascending: false });
+    const { data, error } = await query.order("created_at", {
+      ascending: false,
+    });
 
     if (error) {
       console.error("[GET /api/memories] Supabase error:", error);
