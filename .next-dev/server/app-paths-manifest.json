@@ -1,0 +1,5 @@
+{
+  "/api/memories/route": "app/api/memories/route.js",
+  "/api/query/route": "app/api/query/route.js",
+  "/dashboard/page": "app/dashboard/page.js"
+}
