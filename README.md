@@ -204,6 +204,32 @@ Set these environment variables in Vercel project settings:
 
 ---
 
+## 📧 Email Verification Setup
+
+After deploying to Vercel, you need to configure Supabase email verification to work with your production domain.
+
+### Quick Setup:
+
+1. **Get your Vercel URL** (e.g., `https://your-app-name.vercel.app`)
+
+2. **Update Supabase Dashboard:**
+   - Go to **Authentication** → **URL Configuration**
+   - Set **Site URL** to your production URL
+   - Add to **Redirect URLs**:
+     ```
+     http://localhost:3000/auth/callback
+     https://your-app-name.vercel.app/auth/callback
+     ```
+
+3. **Update Vercel Environment Variable:**
+   - Add `NEXT_PUBLIC_APP_URL=https://your-app-name.vercel.app`
+
+4. **Test:** Sign up with a new email and verify the link redirects correctly
+
+📖 **Detailed guide:** See [SUPABASE_EMAIL_SETUP.md](./SUPABASE_EMAIL_SETUP.md) for complete instructions, troubleshooting, and multi-environment setup.
+
+---
+
 ## 🔒 Security
 
 - RLS on `memories` enforces per-user data isolation
