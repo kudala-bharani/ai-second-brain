@@ -1,7 +1,7 @@
 'use client'
 
-import { useEffect, useState, useRef, type FormEvent, type KeyboardEvent } from 'react'
-import { Sparkles, Loader2, SendHorizonal, AlertCircle, LightbulbIcon } from 'lucide-react'
+import { useCallback, useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from 'react'
+import { AlertCircle, ArrowUpRight, Loader2, X } from 'lucide-react'
 import type { QueryResult } from '@/types'
 
 interface AskQuestionProps {
@@ -24,232 +24,127 @@ export default function AskQuestion({
   prefillQuestion,
   autoSubmitNonce,
 }: AskQuestionProps) {
-  const [question, setQuestion]   = useState('')
-  const [lastAutoNonce, setLastAutoNonce] = useState<number | undefined>(undefined)
-
-  const [loading,  setLoading]    = useState(false)
-  const [error,    setError]      = useState<string | null>(null)
+  const [question, setQuestion] = useState('')
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const lastAutoNonce = useRef(0)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
-
   const canSubmit = question.trim().length >= 3 && !loading && hasMemories
 
-  // ── Submit ──────────────────────────────────────────────────────────────────
-  async function handleSubmit(e?: FormEvent) {
-    e?.preventDefault()
-    if (!canSubmit) return
+  const submitQuestion = useCallback(async (value: string) => {
+    const submittedQuestion = value.trim()
+    if (submittedQuestion.length < 3 || loading || !hasMemories) return
 
     setError(null)
     setLoading(true)
-
     try {
       const res = await fetch('/api/query', {
-        method:  'POST',
+        method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({ question: question.trim() }),
+        body: JSON.stringify({ question: submittedQuestion }),
       })
-
       const json = await res.json()
 
       if (!res.ok || json.error) {
         setError(json.error ?? 'Something went wrong. Please try again.')
         return
       }
-
-      onResult(json.data as QueryResult, question.trim())
+      onResult(json.data as QueryResult, submittedQuestion)
     } catch {
       setError('Network error. Please check your connection and try again.')
     } finally {
       setLoading(false)
     }
+  }, [hasMemories, loading, onResult])
+
+  useEffect(() => {
+    if (!autoSubmitNonce || autoSubmitNonce === lastAutoNonce.current || !prefillQuestion || loading) return
+    lastAutoNonce.current = autoSubmitNonce
+    setQuestion(prefillQuestion)
+    void submitQuestion(prefillQuestion)
+  }, [autoSubmitNonce, prefillQuestion, loading, submitQuestion])
+
+  function handleSubmit(event: FormEvent) {
+    event.preventDefault()
+    void submitQuestion(question)
   }
 
-  // Submit on Cmd/Ctrl + Enter
-  function handleKeyDown(e: KeyboardEvent<HTMLTextAreaElement>) {
-    if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
-      e.preventDefault()
-      handleSubmit()
+  function handleKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
+    if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') {
+      event.preventDefault()
+      void submitQuestion(question)
     }
   }
 
-  function handleExampleClick(q: string) {
-    setQuestion(q)
+  function handleExampleClick(example: string) {
+    setQuestion(example)
     setError(null)
     textareaRef.current?.focus()
   }
 
-  useEffect(() => {
-    if (prefillQuestion && prefillQuestion !== question && !loading) {
-      setQuestion(prefillQuestion)
-    }
-  }, [prefillQuestion, question, loading])
-
-  useEffect(() => {
-    if (autoSubmitNonce !== undefined && autoSubmitNonce !== lastAutoNonce && !loading) {
-      setLastAutoNonce(autoSubmitNonce)
-      handleSubmit()
-    }
-  }, [autoSubmitNonce, lastAutoNonce, loading])
-
-  // ─────────────────────────────────────────────────────────────────────────────
   return (
-    <div className="space-y-4">
-
-      {/* No memories warning */}
-      {!hasMemories && (
-        <div className="flex items-start gap-3 rounded-xl border border-amber-500/20 bg-amber-500/8 px-4 py-3">
-          <AlertCircle className="mt-0.5 h-4 w-4 flex-shrink-0 text-amber-400" />
-          <div>
-            <p className="text-sm font-medium text-amber-300">No memories yet</p>
-            <p className="mt-0.5 text-xs text-amber-500/80">
-              Add at least one memory before asking questions.
-            </p>
-          </div>
-        </div>
-      )}
-
-      {/* Error banner */}
+    <div className="question-composer">
       {error && (
-        <div className="flex items-start gap-3 rounded-xl border border-red-500/25 bg-red-500/10 px-4 py-3 animate-slide-down">
-          <AlertCircle className="mt-0.5 h-4 w-4 flex-shrink-0 text-red-400" />
-          <p className="text-sm text-red-400">{error}</p>
-          <button
-            onClick={() => setError(null)}
-            className="ml-auto text-red-500/60 hover:text-red-400 transition-colors"
-            aria-label="Dismiss error"
-          >
-            ×
+        <div className="notice-error" role="alert">
+          <AlertCircle size={17} aria-hidden="true" />
+          <span>{error}</span>
+          <button type="button" onClick={() => setError(null)} className="notice-dismiss" aria-label="Dismiss error">
+            <X size={16} aria-hidden="true" />
           </button>
         </div>
       )}
 
-      {/* Main form */}
-      <form onSubmit={handleSubmit} className="space-y-3">
-        <div className="relative">
-          <textarea
-            ref={textareaRef}
-            value={question}
-            onChange={(e) => {
-              setQuestion(e.target.value)
-              if (error) setError(null)
-            }}
-            onKeyDown={handleKeyDown}
-            placeholder={
-              hasMemories
-                ? 'Ask anything about your stored notes…'
-                : 'Add memories first, then ask questions here…'
-            }
-            disabled={loading || !hasMemories}
-            rows={4}
-            className="textarea w-full pr-14 resize-none"
-            aria-label="Your question"
-          />
-
-          {/* Send button inside textarea */}
-          <button
-            type="submit"
-            disabled={!canSubmit}
-            aria-label="Submit question"
-            className="absolute bottom-3 right-3 flex h-9 w-9 items-center justify-center rounded-lg
-                       bg-brand-500 text-white shadow-glow transition-all duration-150
-                       hover:bg-brand-600 active:scale-95
-                       disabled:bg-surface-600 disabled:text-slate-500 disabled:shadow-none disabled:cursor-not-allowed"
-          >
-            {loading ? (
-              <Loader2 className="h-4 w-4 animate-spin" />
-            ) : (
-              <SendHorizonal className="h-4 w-4" />
-            )}
+      <form className="question-form" onSubmit={handleSubmit}>
+        <label htmlFor="notebook-question" className="label sr-only">Your question</label>
+        <textarea
+          ref={textareaRef}
+          id="notebook-question"
+          value={question}
+          onChange={(event) => {
+            setQuestion(event.target.value)
+            if (error) setError(null)
+          }}
+          onKeyDown={handleKeyDown}
+          placeholder={hasMemories ? 'What do your notes say about…' : 'Add a memory to ask a question'}
+          disabled={loading || !hasMemories}
+          rows={3}
+          className="input textarea question-input"
+          aria-describedby="question-hint"
+        />
+        <div className="question-actions">
+          <p id="question-hint" className="field-detail">
+            {hasMemories
+              ? <><kbd>Ctrl/Cmd</kbd> + <kbd>Enter</kbd> to send</>
+              : 'Save at least one memory to start asking questions.'}
+          </p>
+          <button type="submit" disabled={!canSubmit} className="btn-primary">
+            {loading ? 'Asking…' : 'Ask question'}
+            {loading
+              ? <Loader2 size={17} className="status-spinner" aria-hidden="true" />
+              : <ArrowUpRight size={17} aria-hidden="true" />}
           </button>
-        </div>
-
-        {/* Hint row */}
-        <div className="flex items-center justify-between text-xs text-slate-600">
-          <div className="flex items-center gap-1.5">
-            <Sparkles className="h-3 w-3 text-brand-500/60" />
-            <span>Powered by RAG — answers only from your notes</span>
-          </div>
-          <span className="hidden sm:block">
-            <kbd className="rounded border border-white/10 bg-surface-700 px-1.5 py-0.5 font-mono text-[10px] text-slate-500">
-              Ctrl/Cmd
-            </kbd>
-            {' '}+{' '}
-            <kbd className="rounded border border-white/10 bg-surface-700 px-1.5 py-0.5 font-mono text-[10px] text-slate-500">
-              Enter
-            </kbd>
-            {' '}to send
-          </span>
         </div>
       </form>
 
-      {/* Loading state */}
       {loading && (
-        <div className="rounded-xl border bg-surface-700/50 px-4 py-5 animate-fade-in"
-          style={{ borderColor: 'rgba(99,102,241,0.2)' }}
-        >
-          <div className="flex items-center gap-3">
-            <div className="relative flex h-9 w-9 flex-shrink-0 items-center justify-center">
-              <span className="absolute inset-0 rounded-full bg-brand-500/20 animate-ping" />
-              <span className="relative flex h-9 w-9 items-center justify-center rounded-full bg-brand-500/15">
-                <Sparkles className="h-4 w-4 text-brand-400" />
-              </span>
-            </div>
-            <div>
-              <p className="text-sm font-medium text-slate-200">Searching your memories…</p>
-              <p className="text-xs text-slate-500">
-                Embedding your question → vector search → generating answer
-              </p>
-            </div>
-          </div>
-
-          {/* Progress steps */}
-          <div className="mt-4 flex items-center gap-2">
-            {[
-              'Embedding query',
-              'Similarity search',
-              'Generating answer',
-            ].map((step, idx) => (
-              <div key={step} className="flex items-center gap-2">
-                <div className="flex items-center gap-1.5 rounded-full border border-brand-500/20 bg-brand-500/10 px-2.5 py-1">
-                  <span
-                    className="h-1.5 w-1.5 rounded-full bg-brand-400"
-                    style={{ animationDelay: `${idx * 300}ms` }}
-                  />
-                  <span className="text-[10px] font-medium text-brand-400">{step}</span>
-                </div>
-                {idx < 2 && (
-                  <span className="text-slate-700">→</span>
-                )}
-              </div>
-            ))}
-          </div>
+        <div className="notice-neutral" role="status">
+          <span>Searching your notes and writing an answer…</span>
         </div>
       )}
 
-      {/* Example questions (shown when no question typed and has memories) */}
       {!question && hasMemories && !loading && (
-        <div className="space-y-2 animate-fade-in">
-          <div className="flex items-center gap-1.5">
-            <LightbulbIcon className="h-3.5 w-3.5 text-slate-600" />
-            <p className="text-xs font-medium text-slate-600 uppercase tracking-widest">
-              Try asking
-            </p>
-          </div>
-          <div className="flex flex-wrap gap-2">
-            {EXAMPLE_QUESTIONS.map((q) => (
-              <button
-                key={q}
-                type="button"
-                onClick={() => handleExampleClick(q)}
-                className="rounded-full border px-3 py-1.5 text-xs text-slate-400
-                           transition-all duration-150
-                           hover:border-brand-500/40 hover:bg-brand-500/10 hover:text-brand-300
-                           active:scale-95"
-                style={{ borderColor: 'rgba(255,255,255,0.08)' }}
-              >
-                {q}
-              </button>
+        <div className="question-examples">
+          <p className="label">Try asking</p>
+          <ul>
+            {EXAMPLE_QUESTIONS.map((example) => (
+              <li key={example}>
+                <button type="button" onClick={() => handleExampleClick(example)}>
+                  <ArrowUpRight size={15} aria-hidden="true" />
+                  {example}
+                </button>
+              </li>
             ))}
-          </div>
+          </ul>
         </div>
       )}
     </div>

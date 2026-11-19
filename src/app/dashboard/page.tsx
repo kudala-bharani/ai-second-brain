@@ -11,96 +11,8 @@ import AskQuestion from '@/components/AskQuestion'
 import AIResponse from '@/components/AIResponse'
 import MemoryList from '@/components/MemoryList'
 
-import { Brain, Sparkles, BookOpen, Tags, History } from 'lucide-react'
-
-// ─── Stat Card ────────────────────────────────────────────────────────────────
-
-function StatCard({
-  icon,
-  label,
-  value,
-  sub,
-  gradient,
-}: {
-  icon: React.ReactNode
-  label: string
-  value: string | number
-  sub?: string
-  gradient: string
-}) {
-  return (
-    <div className="card p-5 flex items-center gap-4">
-      <div className={`flex h-11 w-11 flex-shrink-0 items-center justify-center rounded-xl ${gradient}`}>
-        {icon}
-      </div>
-      <div>
-        <p className="text-xs font-semibold uppercase tracking-widest text-slate-500">{label}</p>
-        <p className="mt-0.5 text-2xl font-bold text-slate-100 leading-none">{value}</p>
-        {sub && <p className="mt-1 text-xs text-slate-600">{sub}</p>}
-      </div>
-    </div>
-  )
-}
-
-// ─── Empty Landing ────────────────────────────────────────────────────────────
-
-function EmptyLanding() {
-  return (
-    <div className="flex flex-col items-center justify-center rounded-2xl border border-dashed py-16 px-8 text-center"
-         style={{ borderColor: 'rgba(255,255,255,0.08)' }}>
-      <div className="mb-5 flex h-16 w-16 items-center justify-center rounded-2xl bg-brand-500/10 ring-1 ring-brand-500/20">
-        <Brain className="h-8 w-8 text-brand-400" />
-      </div>
-      <h3 className="mb-2 text-lg font-semibold text-slate-200">Your Second Brain is empty</h3>
-      <p className="max-w-sm text-sm text-slate-500 leading-relaxed">
-        Start by adding your first memory above — paste in notes, ideas, facts, or anything
-        you want to remember. Then ask AI questions to retrieve your knowledge instantly.
-      </p>
-      <div className="mt-6 flex flex-wrap justify-center gap-2">
-        {['📝 Meeting notes', '💡 Ideas', '📚 Book summaries', '🔖 Research'].map((tag) => (
-          <span
-            key={tag}
-            className="rounded-full border px-3 py-1 text-xs text-slate-500"
-            style={{ borderColor: 'rgba(255,255,255,0.08)' }}
-          >
-            {tag}
-          </span>
-        ))}
-      </div>
-    </div>
-  )
-}
-
-// ─── Section Header ───────────────────────────────────────────────────────────
-
-function SectionHeader({
-  icon,
-  title,
-  subtitle,
-  badge,
-}: {
-  icon: React.ReactNode
-  title: string
-  subtitle?: string
-  badge?: React.ReactNode
-}) {
-  return (
-    <div className="mb-5 flex items-start justify-between gap-3">
-      <div className="flex items-center gap-3">
-        <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-brand-500/15 text-brand-400">
-          {icon}
-        </div>
-        <div>
-          <h2 className="text-base font-semibold text-slate-100">{title}</h2>
-          {subtitle && <p className="text-xs text-slate-500">{subtitle}</p>}
-        </div>
-      </div>
-      {badge}
-    </div>
-  )
-}
-
-// ─── Dashboard Page ───────────────────────────────────────────────────────────
+import { ArrowDown, ArrowUpRight, BookOpen, MessageSquare, Plus } from 'lucide-react'
+import './workspace.css'
 
 export default function DashboardPage() {
   const router   = useRouter()
@@ -184,7 +96,7 @@ export default function DashboardPage() {
     // Scroll to response on mobile
     setTimeout(() => {
       document.getElementById('ai-response-section')?.scrollIntoView({
-        behavior: 'smooth',
+        behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth',
         block: 'start',
       })
     }, 100)
@@ -217,83 +129,102 @@ export default function DashboardPage() {
   const recentQuestions = queryHistory.length
 
   return (
-    <div className="min-h-screen flex flex-col">
-
-      {/* ── Header ──────────────────────────────────────────────────────────── */}
+    <div className="workspace">
       <Header userEmail={userEmail} onLogout={handleLogout} />
 
-      {/* ── Main content ─────────────────────────────────────────────────────── */}
-      <main className="flex-1 mx-auto w-full max-w-7xl px-4 sm:px-6 lg:px-8 py-8">
+      <main className="workspace-main">
+        <section className="workspace-width workspace-overview" aria-labelledby="workspace-title">
+          <div className="workspace-overview-inner">
+            <div className="workspace-intro">
+              <h1 id="workspace-title">Your notebook</h1>
+              <dl className="workspace-stats" aria-label="Notebook totals">
+                <div><dt>Memories</dt><dd>{memoryCount}</dd></div>
+                <div><dt>Words stored</dt><dd>{totalWords.toLocaleString()}</dd></div>
+                <div>
+                  <dt>Tagged notes</dt>
+                  <dd>
+                    {taggedMemories}
+                    {memoryCount > 0 && (
+                      <span> ({Math.round((taggedMemories / memoryCount) * 100)}%)</span>
+                    )}
+                  </dd>
+                </div>
+                <div><dt>Recent questions</dt><dd>{recentQuestions}</dd></div>
+              </dl>
+            </div>
+            <div className="workspace-actions">
+              <a className="btn-secondary mobile-question-link" href="#ai-response-section">
+                Ask a question <ArrowDown size={15} aria-hidden="true" />
+              </a>
+              <a className="btn-primary" href="#capture-section">
+                <Plus size={17} aria-hidden="true" /> Add memory
+              </a>
+            </div>
+          </div>
+        </section>
 
-        {/* Stats row */}
-        <div className="mb-8 grid grid-cols-2 gap-3 sm:grid-cols-2 lg:grid-cols-4 animate-slide-up">
-          <StatCard
-            icon={<BookOpen className="h-5 w-5 text-brand-400" />}
-            label="Memories"
-            value={memoryCount}
-            sub={memoryCount === 1 ? '1 memory stored' : `${memoryCount} memories stored`}
-            gradient="bg-brand-500/15"
-          />
-          <StatCard
-            icon={<span className="text-lg">📝</span>}
-            label="Words stored"
-            value={totalWords.toLocaleString()}
-            sub="across saved memories"
-            gradient="bg-violet-500/15"
-          />
-          <StatCard
-            icon={<Tags className="h-5 w-5 text-emerald-400" />}
-            label="Tagged Notes"
-            value={taggedMemories}
-            sub={memoryCount > 0 ? `${Math.round((taggedMemories / memoryCount) * 100)}% coverage` : 'start tagging memories'}
-            gradient="bg-emerald-500/15"
-          />
-          <StatCard
-            icon={<History className="h-5 w-5 text-cyan-400" />}
-            label="Recent Questions"
-            value={recentQuestions}
-            sub={recentQuestions > 0 ? 'last 10 saved in Supabase' : 'ask your first question'}
-            gradient="bg-cyan-500/15"
-          />
-        </div>
-
-        {/* ── Two-column grid ──────────────────────────────────────────────────── */}
-        <div className="grid grid-cols-1 gap-6 lg:grid-cols-5">
-
-          {/* ── Left column (Add Memory + Memory List) ─────────────────────────── */}
-          <div className="lg:col-span-2 flex flex-col gap-6">
-
-            {/* Add Memory */}
-            <section className="card p-6 animate-slide-up stagger-1">
-              <SectionHeader
-                icon={<span className="text-sm">✍️</span>}
-                title="Add Memory"
-                subtitle="Store a new note into your Second Brain"
+        <div className="workspace-width workspace-columns">
+          <section id="ai-response-section" className="workspace-sheet query-sheet" aria-labelledby="query-heading" tabIndex={-1}>
+            <div className="workspace-section-heading">
+              <MessageSquare size={17} aria-hidden="true" />
+              <div>
+                <h2 id="query-heading">Ask your notebook</h2>
+                <p>Get an answer with sources from your saved notes.</p>
+              </div>
+            </div>
+            <div className="query-sheet-body">
+              <AskQuestion
+                hasMemories={memoryCount > 0}
+                onResult={handleQueryResult}
+                prefillQuestion={prefillQuestion}
+                autoSubmitNonce={autoSubmitNonce}
               />
-              <AddMemory onMemoryAdded={handleMemoryAdded} />
-            </section>
-
-            {/* Memory List */}
-            <section className="card p-6 animate-slide-up stagger-2" id="memory-list-section">
-              <SectionHeader
-                icon={<BookOpen className="h-4 w-4" />}
-                title="Your Memories"
-                subtitle="All stored notes"
-                badge={
-                  memoryCount > 0 ? (
-                    <span className="badge-brand">{memoryCount}</span>
-                  ) : undefined
-                }
+              <AIResponse
+                result={queryResult}
+                question={activeQuery}
+                onClear={handleClearResult}
               />
+              {queryHistory.length > 0 && (
+                <section className="question-history" aria-labelledby="history-heading">
+                  <h3 id="history-heading">Recent questions</h3>
+                  <ul className="history-list">
+                    {queryHistory.map(({ id, question }) => (
+                      <li key={id}>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setPrefillQuestion(question)
+                            setAutoSubmitNonce((previous) => previous + 1)
+                          }}
+                          title="Ask again"
+                        >
+                          <span>{question}</span>
+                          <ArrowUpRight size={16} aria-hidden="true" />
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                </section>
+              )}
+            </div>
+          </section>
 
+          <div className="workspace-column">
+            <section id="memory-list-section" className="workspace-sheet library-section" aria-labelledby="memories-heading">
+              <div className="workspace-section-heading">
+                <BookOpen size={17} aria-hidden="true" />
+                <h2 id="memories-heading">Your memories</h2>
+              </div>
               {loadingMem ? (
-                <div className="space-y-3">
-                  {[1, 2, 3].map((i) => (
-                    <div key={i} className="skeleton h-20 w-full" />
-                  ))}
+                <div className="memory-skeleton" role="status">
+                  <span className="sr-only">Loading memories</span>
+                  <span /><span /><span />
                 </div>
               ) : memoryCount === 0 ? (
-                <EmptyLanding />
+                <div className="workspace-empty">
+                  <h3>No memories yet</h3>
+                  <p>Save a meeting note, book highlight, or an idea you want to come back to.</p>
+                </div>
               ) : (
                 <MemoryList
                   memories={memories}
@@ -302,72 +233,21 @@ export default function DashboardPage() {
                 />
               )}
             </section>
-          </div>
 
-          {/* ── Right column (Unified Ask + Response) ───────────────────────────── */}
-          <div className="lg:col-span-3 flex flex-col gap-6">
-            <section
-              id="ai-response-section"
-              className="card p-6 animate-slide-up stagger-2"
-              style={{ minHeight: '260px' }}
-            >
-              <SectionHeader
-                icon={<Sparkles className="h-4 w-4" />}
-                title="Ask Your Brain"
-                subtitle={
-                  queryResult
-                    ? `Answer uses ${queryResult.sources.length} source${queryResult.sources.length !== 1 ? 's' : ''}`
-                    : 'Ask a question and get an answer from your notes'
-                }
-                badge={
-                  queryResult && queryResult.sources.length > 0 ? (
-                    <span className="badge-green">
-                      {queryResult.sources.length} source{queryResult.sources.length !== 1 ? 's' : ''}
-                    </span>
-                  ) : undefined
-                }
-              />
-              <AskQuestion
-                hasMemories={memoryCount > 0}
-                onResult={handleQueryResult}
-                prefillQuestion={prefillQuestion}
-                autoSubmitNonce={autoSubmitNonce}
-              />
-              <div className="divider" />
-              <AIResponse
-                result={queryResult}
-                question={activeQuery}
-                onClear={handleClearResult}
-              />
-              {queryHistory.length > 0 && (
-                <div className="mt-4 space-y-2">
-                  <p className="text-xs uppercase tracking-widest text-slate-500">Recent Questions</p>
-                  <div className="max-h-44 overflow-y-auto space-y-1">
-                    {queryHistory.map((item) => (
-                      <button
-                        key={item.id}
-                        onClick={() => {
-                          setPrefillQuestion(item.question)
-                          setAutoSubmitNonce((n) => n + 1)
-                        }}
-                        className="w-full rounded-lg border border-white/10 px-3 py-2 text-left text-xs text-slate-300 hover:bg-surface-700"
-                      >
-                        {item.question}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              )}
+            <section id="capture-section" className="workspace-sheet capture-sheet" aria-labelledby="capture-heading" tabIndex={-1}>
+              <div className="workspace-section-heading">
+                <Plus size={17} aria-hidden="true" />
+                <h2 id="capture-heading">Add memory</h2>
+              </div>
+              <AddMemory onMemoryAdded={handleMemoryAdded} />
             </section>
           </div>
         </div>
       </main>
 
-      {/* ── Footer ───────────────────────────────────────────────────────────── */}
-      <footer className="mt-8 border-t py-5 text-center text-xs text-slate-700"
-              style={{ borderColor: 'rgba(255,255,255,0.05)' }}>
-        <span className="text-gradient font-semibold">AI Second Brain</span>
-        {' '}— answers are grounded exclusively in your stored notes
+      <footer className="workspace-width workspace-footer">
+        <span>AI Second Brain</span>
+        <span>Answers are grounded in your saved notes.</span>
       </footer>
     </div>
   )

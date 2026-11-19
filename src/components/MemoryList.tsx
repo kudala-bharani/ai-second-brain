@@ -1,8 +1,8 @@
 'use client'
 
-import { useState } from 'react'
+import { useId, useState } from 'react'
 import { formatDistanceToNow } from 'date-fns'
-import { Trash2, FileText, Clock, Loader2, ChevronDown, ChevronUp, Pencil, Save, X } from 'lucide-react'
+import { Trash2, Loader2, ChevronDown, ChevronUp, Pencil } from 'lucide-react'
 import type { Memory } from '@/types'
 
 // ─── Memory Card ──────────────────────────────────────────────────────────────
@@ -23,6 +23,7 @@ function MemoryCard({ memory, onDelete, onUpdate }: MemoryCardProps) {
   const [content, setContent] = useState(memory.content)
   const [tagsInput, setTagsInput] = useState((memory.tags ?? []).join(', '))
 
+  const editorId = useId()
   const PREVIEW_LENGTH = 160
 
   const needsExpand  = memory.content.length > PREVIEW_LENGTH
@@ -94,184 +95,101 @@ function MemoryCard({ memory, onDelete, onUpdate }: MemoryCardProps) {
   }
 
   return (
-    <article
-      className={`
-        group relative rounded-xl border p-4
-        transition-all duration-200
-        ${deleting ? 'opacity-50 scale-[0.99] pointer-events-none' : 'hover:border-white/10'}
-      `}
-      style={{
-        background: 'rgba(22, 22, 31, 0.6)',
-        borderColor: 'rgba(255,255,255,0.07)',
-      }}
-    >
-      {/* ── Top row: title + actions ── */}
-      <div className="flex items-start justify-between gap-3 mb-2">
-
-        {/* Title / fallback */}
-        <div className="flex items-start gap-2.5 min-w-0">
-          <div className="mt-0.5 flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-lg bg-brand-500/12"
-            style={{ background: 'rgba(99,102,241,0.12)' }}>
-            <FileText className="h-3.5 w-3.5 text-brand-400" />
-          </div>
-          <div className="min-w-0">
-            <h3 className="truncate text-sm font-semibold text-slate-200 leading-snug">
-              {memory.title || 'Untitled note'}
-            </h3>
-            <div className="mt-0.5 flex items-center gap-2 text-xs text-slate-600">
-              <Clock className="h-3 w-3 flex-shrink-0" />
-              <span>{timeAgo}</span>
-              <span className="text-slate-700">·</span>
-              <span>{wordCount} words</span>
-            </div>
-          </div>
+    <article className="memory-entry" aria-busy={deleting || saving}>
+      <div className="memory-entry-header">
+        <div className="memory-entry-heading">
+          <h3 id={`${editorId}-heading`}>{memory.title || 'Untitled note'}</h3>
+          <p className="field-detail">
+            <time dateTime={memory.created_at}>{timeAgo}</time>
+            <span aria-hidden="true"> · </span>
+            {wordCount} {wordCount === 1 ? 'word' : 'words'}
+          </p>
         </div>
 
-        {/* Delete button / confirm */}
-        <div className="flex-shrink-0">
+        <div className="memory-entry-actions">
           {showConfirm ? (
-            <div className="flex items-center gap-1.5 animate-scale-in">
-              <button
-                onClick={handleCancelDelete}
-                className="rounded-lg px-2 py-1 text-xs text-slate-400
-                           hover:text-slate-200 hover:bg-surface-600
-                           transition-colors duration-150"
-              >
+            <>
+              <button type="button" onClick={handleCancelDelete} className="btn-ghost btn-sm" disabled={deleting}>
                 Cancel
               </button>
-              <button
-                onClick={handleDelete}
-                disabled={deleting}
-                className="flex items-center gap-1 rounded-lg bg-red-500/15 px-2 py-1 text-xs font-medium
-                           text-red-400 ring-1 ring-red-500/25
-                           hover:bg-red-500/25 hover:text-red-300
-                           transition-all duration-150
-                           disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                {deleting ? (
-                  <Loader2 className="h-3 w-3 animate-spin" />
-                ) : (
-                  <Trash2 className="h-3 w-3" />
-                )}
-                Confirm
+              <button type="button" onClick={handleDelete} disabled={deleting} className="btn-danger btn-sm">
+                {deleting && <Loader2 size={16} className="status-spinner" aria-hidden="true" />}
+                {deleting ? 'Deleting…' : 'Confirm delete'}
               </button>
-            </div>
+            </>
           ) : (
-            <button
-              onClick={handleDelete}
-              className="rounded-lg p-1.5 text-slate-700
-                         opacity-0 group-hover:opacity-100
-                         hover:bg-red-500/10 hover:text-red-400
-                         transition-all duration-150"
-              aria-label="Delete memory"
-            >
-              <Trash2 className="h-4 w-4" />
-            </button>
+            <>
+              {!editing && (
+                <button type="button" onClick={() => setEditing(true)} className="icon-button" aria-label="Edit memory" aria-describedby={`${editorId}-heading`} title="Edit memory">
+                  <Pencil size={16} aria-hidden="true" />
+                </button>
+              )}
+              <button type="button" onClick={handleDelete} className="icon-button memory-delete" aria-label="Delete memory" aria-describedby={`${editorId}-heading`} title="Delete memory">
+                <Trash2 size={16} aria-hidden="true" />
+              </button>
+            </>
           )}
         </div>
       </div>
 
-      {/* ── Content preview / edit ── */}
-      <div className="pl-9">
-        {editing ? (
-          <div className="space-y-2">
-            <input
-              value={title}
-              onChange={(e) => setTitle(e.target.value)}
-              className="input py-2"
-              placeholder="Title"
-            />
-            <textarea
-              value={content}
-              onChange={(e) => setContent(e.target.value)}
-              className="textarea"
-              rows={4}
-            />
-            <input
-              value={tagsInput}
-              onChange={(e) => setTagsInput(e.target.value)}
-              className="input py-2"
-              placeholder="tags (comma separated)"
-            />
-            <div className="flex gap-2">
-              <button onClick={handleSaveEdit} disabled={saving} className="btn btn-primary btn-sm">
-                {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
-                Save
-              </button>
-              <button
-                onClick={() => {
-                  setEditing(false)
-                  setTitle(memory.title ?? '')
-                  setContent(memory.content)
-                  setTagsInput((memory.tags ?? []).join(', '))
-                }}
-                className="btn btn-ghost btn-sm"
-              >
-                <X className="h-3.5 w-3.5" />
-                Cancel
-              </button>
-            </div>
+      {editing ? (
+        <div className="memory-edit">
+          <div>
+            <label htmlFor={`${editorId}-title`} className="label">Title</label>
+            <input id={`${editorId}-title`} value={title} onChange={(event) => setTitle(event.target.value)} className="input" />
           </div>
-        ) : (
-          <>
-            <p className="text-sm text-slate-400 leading-relaxed whitespace-pre-wrap break-words">
-              {previewText}
-            </p>
-            {!!memory.tags?.length && (
-              <div className="mt-2 flex flex-wrap gap-1.5">
-                {memory.tags.map((tag) => (
-                  <span key={tag} className="badge-slate text-[10px] px-1.5 py-0.5">#{tag}</span>
-                ))}
-              </div>
-            )}
-          </>
-        )}
-
-        {needsExpand && (
-          <button
-            onClick={() => setExpanded(e => !e)}
-            className="mt-2 flex items-center gap-1 text-xs font-medium text-brand-400/70
-                       hover:text-brand-400 transition-colors duration-150"
-          >
-            {expanded ? (
-              <>
-                <ChevronUp className="h-3.5 w-3.5" />
-                Show less
-              </>
-            ) : (
-              <>
-                <ChevronDown className="h-3.5 w-3.5" />
-                Show more
-              </>
-            )}
-          </button>
-        )}
-      </div>
-
-      {!editing && (
-        <button
-          onClick={() => setEditing(true)}
-          className="absolute bottom-3 right-3 rounded-lg p-1.5 text-slate-600 hover:text-slate-300 hover:bg-surface-600"
-          aria-label="Edit memory"
-        >
-          <Pencil className="h-3.5 w-3.5" />
-        </button>
-      )}
-
-      {/* Deleting overlay */}
-      {deleting && (
-        <div className="absolute inset-0 flex items-center justify-center rounded-xl">
-          <div className="flex items-center gap-2 text-xs text-red-400">
-            <Loader2 className="h-4 w-4 animate-spin" />
-            Deleting…
+          <div>
+            <label htmlFor={`${editorId}-content`} className="label">Content</label>
+            <textarea id={`${editorId}-content`} value={content} onChange={(event) => setContent(event.target.value)} className="input textarea" rows={4} />
+          </div>
+          <div>
+            <label htmlFor={`${editorId}-tags`} className="label">Tags</label>
+            <input id={`${editorId}-tags`} value={tagsInput} onChange={(event) => setTagsInput(event.target.value)} className="input" placeholder="Separate tags with commas" />
+          </div>
+          <div className="form-actions">
+            <button type="button" onClick={handleSaveEdit} disabled={saving} className="btn-primary btn-sm">
+              {saving && <Loader2 size={16} className="status-spinner" aria-hidden="true" />}
+              {saving ? 'Saving…' : 'Save'}
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setEditing(false)
+                setTitle(memory.title ?? '')
+                setContent(memory.content)
+                setTagsInput((memory.tags ?? []).join(', '))
+              }}
+              className="btn-ghost btn-sm"
+            >
+              Cancel
+            </button>
           </div>
         </div>
+      ) : (
+        <>
+          <p className="memory-preview" id={`${editorId}-preview`}>{previewText}</p>
+          {needsExpand && (
+            <button
+              type="button"
+              onClick={() => setExpanded((value) => !value)}
+              className="text-control"
+              aria-expanded={expanded}
+              aria-controls={`${editorId}-preview`}
+            >
+              {expanded ? <ChevronUp size={16} aria-hidden="true" /> : <ChevronDown size={16} aria-hidden="true" />}
+              {expanded ? 'Show less' : 'Show more'}
+            </button>
+          )}
+          {!!memory.tags?.length && (
+            <ul className="memory-tags" aria-label="Tags">
+              {memory.tags.map((tag) => <li key={tag}>#{tag}</li>)}
+            </ul>
+          )}
+        </>
       )}
     </article>
   )
 }
-
-// ─── Memory List ──────────────────────────────────────────────────────────────
 
 interface MemoryListProps {
   memories: Memory[]
@@ -295,77 +213,58 @@ export default function MemoryList({ memories, onDelete, onUpdate }: MemoryListP
   })
 
   return (
-    <div className="flex flex-col gap-3">
-
-      {/* Filters */}
-      {memories.length > 0 && (
-        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-          <div className="relative mb-1">
-          <svg
-            className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-600"
-            fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24"
-          >
-            <path strokeLinecap="round" strokeLinejoin="round"
-              d="M21 21l-4.35-4.35m0 0A7.5 7.5 0 104.5 4.5a7.5 7.5 0 0012.15 12.15z" />
-          </svg>
+    <div className="memory-list">
+      <div className="memory-filters">
+        <div>
+          <label htmlFor="memory-search" className="label">Search memories</label>
           <input
+            id="memory-search"
             type="search"
             value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search your notes…"
-            className="input pl-9 py-2 text-xs"
-          />
-          </div>
-          <input
-            type="search"
-            value={tagFilter}
-            onChange={(e) => setTagFilter(e.target.value)}
-            placeholder="Filter by tag…"
-            className="input py-2 text-xs"
+            onChange={(event) => setSearch(event.target.value)}
+            placeholder="Title or content"
+            className="input"
           />
         </div>
-      )}
-
-      {/* Results count */}
-      {search && (
-        <p className="text-xs text-slate-600 -mt-1 mb-1">
-          {filtered.length === 0
-            ? 'No notes match your search'
-            : `${filtered.length} of ${memories.length} note${memories.length !== 1 ? 's' : ''}`}
-        </p>
-      )}
-
-      {/* Cards */}
-      <div className="flex flex-col gap-2 max-h-[420px] overflow-y-auto pr-0.5">
-        {filtered.length === 0 && search ? (
-          <div className="flex flex-col items-center justify-center rounded-xl border border-dashed py-10 text-center"
-            style={{ borderColor: 'rgba(255,255,255,0.07)' }}>
-            <p className="text-sm text-slate-500">No notes match &ldquo;{search}&rdquo;</p>
-            <button
-              onClick={() => setSearch('')}
-              className="mt-2 text-xs text-brand-400 hover:text-brand-300 transition-colors"
-            >
-              Clear search
-            </button>
-          </div>
-        ) : (
-          filtered.map((memory, i) => (
-            <div
-              key={memory.id}
-              className="animate-slide-up"
-              style={{ animationDelay: `${Math.min(i * 40, 200)}ms` }}
-            >
-              <MemoryCard memory={memory} onDelete={onDelete} onUpdate={onUpdate} />
-            </div>
-          ))
-        )}
+        <div>
+          <label htmlFor="memory-tag-filter" className="label">Filter by tag</label>
+          <input
+            id="memory-tag-filter"
+            type="search"
+            value={tagFilter}
+            onChange={(event) => setTagFilter(event.target.value)}
+            placeholder="e.g. research"
+            className="input"
+          />
+        </div>
       </div>
 
-      {/* Footer count */}
-      {memories.length > 0 && !search && (
-        <p className="text-center text-xs text-slate-700 pt-1">
-          {memories.length} memor{memories.length === 1 ? 'y' : 'ies'} stored
-        </p>
+      <p className="field-detail memory-list-count" role="status">
+        {search || tagFilter
+          ? `${filtered.length} of ${memories.length} ${memories.length === 1 ? 'memory' : 'memories'}`
+          : `${memories.length} ${memories.length === 1 ? 'memory' : 'memories'} stored`}
+      </p>
+
+      {filtered.length === 0 ? (
+        <div className="workspace-empty">
+          <h3>No matching memories</h3>
+          <button
+            type="button"
+            onClick={() => {
+              setSearch('')
+              setTagFilter('')
+            }}
+            className="text-control"
+          >
+            {search && !tagFilter ? 'Clear search' : 'Clear filters'}
+          </button>
+        </div>
+      ) : (
+        <div className="memory-entries">
+          {filtered.map((memory) => (
+            <MemoryCard key={memory.id} memory={memory} onDelete={onDelete} onUpdate={onUpdate} />
+          ))}
+        </div>
       )}
     </div>
   )

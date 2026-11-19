@@ -1,11 +1,12 @@
 import type { Metadata, Viewport } from 'next'
-import { Inter } from 'next/font/google'
+import localFont from 'next/font/local'
 import './globals.css'
 
-const inter = Inter({
-  subsets: ['latin'],
+const geist = localFont({
+  src: './fonts/geist.woff2',
+  weight: '400 700',
   display: 'swap',
-  variable: '--font-inter',
+  variable: '--font-geist',
 })
 
 export const metadata: Metadata = {
@@ -21,7 +22,7 @@ export const metadata: Metadata = {
 }
 
 export const viewport: Viewport = {
-  themeColor: '#0f0f18',
+  themeColor: '#101314',
   colorScheme: 'dark',
   width: 'device-width',
   initialScale: 1,
@@ -33,8 +34,8 @@ export default function RootLayout({
   children: React.ReactNode
 }) {
   return (
-    <html lang="en" className={inter.variable} suppressHydrationWarning>
-      <body className="min-h-screen bg-surface-900 text-slate-100 antialiased font-sans selection:bg-brand-500/30 selection:text-brand-200">
+    <html lang="en" className={geist.variable}>
+      <body>
         {children}
       </body>
     </html>
