@@ -1,6 +1,6 @@
 import { createClient } from "@/lib/supabase/server";
 import { NextResponse } from "next/server";
-import { generateEmbedding } from "@/lib/openai";
+import { generateEmbedding } from "@/lib/embeddings";
 
 export const dynamic = "force-dynamic";
 

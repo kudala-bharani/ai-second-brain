@@ -7,7 +7,7 @@
 ![Next.js](https://img.shields.io/badge/Next.js-14-black?style=flat-square&logo=next.js)
 ![Supabase](https://img.shields.io/badge/Supabase-pgvector-3ECF8E?style=flat-square&logo=supabase)
 ![OpenRouter](https://img.shields.io/badge/OpenRouter-LLM%20Gateway-8b5cf6?style=flat-square)
-![HuggingFace](https://img.shields.io/badge/HuggingFace-Embeddings-f59e0b?style=flat-square)
+![ONNX Runtime](https://img.shields.io/badge/ONNX_Runtime-Embeddings-f59e0b?style=flat-square)
 ![TypeScript](https://img.shields.io/badge/TypeScript-5-3178C6?style=flat-square&logo=typescript)
 ![Tailwind CSS](https://img.shields.io/badge/Tailwind-3-38BDF8?style=flat-square&logo=tailwind-css)
 
@@ -20,7 +20,7 @@
 | 🔐 **Authentication**       | Email/password sign-up & login via Supabase Auth                             |
 | 📝 **Add + Edit Memories**  | Create, update, and delete memories with automatic re-embedding              |
 | 🏷️ **Tagging**              | Add tags to memories and filter your notes by tag/search                     |
-| 🔍 **Vector Search**        | Semantic retrieval using HuggingFace embeddings + pgvector cosine similarity |
+| 🔍 **Vector Search**        | Semantic retrieval using local BGE embeddings + pgvector cosine similarity |
 | 🤖 **RAG Q&A**              | Ask questions and get answers constrained to your stored notes               |
 | 📌 **Source Evidence**      | Answers include source notes and evidence snippets with term highlighting    |
 | 🕘 **Question History**     | Recent queries are saved locally with one-click rerun                        |
@@ -35,11 +35,11 @@
 User -> Next.js Frontend (React)
           |
           +-- POST /api/memories
-          |      -> HuggingFace embedding (BAAI/bge-small-en-v1.5)
+          |      -> Local BGE embedding (BAAI/bge-small-en-v1.5)
           |      -> Supabase insert/update (content + tags + vector)
           |
           +-- POST /api/query
-                 -> Question embedding (HuggingFace)
+                 -> Question embedding (local BGE)
                  -> Supabase RPC: match_memories
                  -> Prompt assembly with retrieved notes
                  -> OpenRouter LLM completion (fallback model order)
@@ -55,7 +55,7 @@ User -> Next.js Frontend (React)
 | **Auth**         | Supabase Auth (email/password)                  |
 | **Database**     | Supabase PostgreSQL                             |
 | **Vector Store** | Supabase pgvector (cosine similarity)           |
-| **Embeddings**   | HuggingFace `BAAI/bge-small-en-v1.5` (384 dims) |
+| **Embeddings**   | ONNX Runtime, `BAAI/bge-small-en-v1.5` (384 dims) |
 | **LLM Gateway**  | OpenRouter                                      |
 | **Deployment**   | Vercel                                          |
 
@@ -71,7 +71,7 @@ Table: public.memories
 │ title       │ text             │ Optional memory title                          │
 │ content     │ text             │ Full note content                              │
 │ tags        │ text[]           │ Optional tags (default '{}')                  │
-│ embedding   │ vector(384)      │ HuggingFace embedding output                   │
+│ embedding   │ vector(384)      │ BGE embedding output                           │
 │ created_at  │ timestamptz      │ Auto-set on insert                             │
 └─────────────┴──────────────────┴───────────────────────────────────────────────┘
 ```
@@ -85,7 +85,6 @@ Table: public.memories
 - **Node.js** 18+ and **npm**
 - A **Supabase** project ([free tier](https://supabase.com) works)
 - An **OpenRouter** API key
-- A **HuggingFace** API token
 
 ---
 
@@ -107,7 +106,6 @@ Copy `.env.local.example` to `.env.local` and set:
 NEXT_PUBLIC_SUPABASE_URL=https://your-project-ref.supabase.co
 NEXT_PUBLIC_SUPABASE_ANON_KEY=your-supabase-anon-key
 OPENROUTER_API_KEY=sk-or-v1-your-openrouter-key
-HUGGINGFACE_API_KEY=hf_your_token
 NEXT_PUBLIC_APP_URL=http://localhost:3000
 ```
 
@@ -118,7 +116,6 @@ Where to get them:
 | `NEXT_PUBLIC_SUPABASE_URL`      | Supabase Dashboard -> Project Settings -> API                            |
 | `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Supabase Dashboard -> Project Settings -> API (`anon` key)               |
 | `OPENROUTER_API_KEY`            | [openrouter.ai/keys](https://openrouter.ai/keys)                         |
-| `HUGGINGFACE_API_KEY`           | [huggingface.co/settings/tokens](https://huggingface.co/settings/tokens) |
 
 ---
 
@@ -153,7 +150,7 @@ Open [http://localhost:3000](http://localhost:3000)
 
 ```text
 1. User enters title/content/tags
-2. API embeds title+content with HuggingFace model
+2. API embeds title+content with the local BGE model
 3. API writes memory + embedding + tags to Supabase
 4. UI refreshes memory list
 ```
@@ -173,7 +170,7 @@ Open [http://localhost:3000](http://localhost:3000)
 
 ## ⚙️ Configuration Notes
 
-- Embedding dimension must remain **384** unless you migrate schema + RPC.
+- Embeddings use the existing **384-dimensional BGE model** locally, with CLS pooling and L2 normalization. The checked-in [ONNX export](https://huggingface.co/Xenova/bge-small-en-v1.5/tree/ea104dacec62c0de699686887e3f920caeb4f3e3) is pinned to that model.
 - Query history/settings are currently stored in browser localStorage.
 - Free model availability can vary; fallback behavior is built in.
 
@@ -183,7 +180,7 @@ Open [http://localhost:3000](http://localhost:3000)
 
 | Route                      | Purpose                                   |
 | -------------------------- | ----------------------------------------- |
-| `GET /api/test-embedding`  | Quick provider diagnostics in development |
+| `GET /api/test-embedding`  | Check that the local embedding model loads |
 | `GET /api/memories`        | Fetch user memories                       |
 | `POST /api/memories`       | Create memory (title/content/tags)        |
 | `PATCH /api/memories/:id`  | Edit memory + re-embed                    |
@@ -199,7 +196,6 @@ Set these environment variables in Vercel project settings:
 - `NEXT_PUBLIC_SUPABASE_URL`
 - `NEXT_PUBLIC_SUPABASE_ANON_KEY`
 - `OPENROUTER_API_KEY`
-- `HUGGINGFACE_API_KEY`
 - `NEXT_PUBLIC_APP_URL`
 
 ---
@@ -246,5 +242,5 @@ MIT
 ---
 
 <div align="center">
-Built with Next.js, Supabase, OpenRouter, and HuggingFace.
+Built with Next.js, Supabase, OpenRouter, and ONNX Runtime.
 </div>

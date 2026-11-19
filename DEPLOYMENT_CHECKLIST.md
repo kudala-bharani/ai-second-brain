@@ -28,7 +28,6 @@ Go to Project Settings → Environment Variables and add:
 - [ ] `NEXT_PUBLIC_SUPABASE_URL` = `https://your-project.supabase.co`
 - [ ] `NEXT_PUBLIC_SUPABASE_ANON_KEY` = `your-anon-key`
 - [ ] `OPENROUTER_API_KEY` = `sk-or-v1-...`
-- [ ] `HUGGINGFACE_API_KEY` = `hf_...`
 - [ ] `NEXT_PUBLIC_APP_URL` = `https://your-app-name.vercel.app` ⚠️ **IMPORTANT**
 
 ### 3. Redeploy

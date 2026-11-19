@@ -2,7 +2,7 @@
   "framework": "nextjs",
   "buildCommand": "next build",
   "devCommand": "next dev",
-  "installCommand": "npm install",
+  "installCommand": "ONNXRUNTIME_NODE_INSTALL_CUDA=skip npm install",
   "regions": ["iad1"],
   "headers": [
     {

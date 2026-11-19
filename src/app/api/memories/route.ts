@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
-import { generateEmbedding } from "@/lib/openai";
+import { generateEmbedding } from "@/lib/embeddings";
 import type { Memory } from "@/types";
 
 // Force dynamic rendering — API routes must not be statically evaluated at build time

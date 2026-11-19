@@ -1,23 +1,15 @@
 export const dynamic = "force-dynamic";
 
-// OpenRouter free models can go in/out of availability.
-// Try multiple models so queries continue working when one model has no endpoints.
-const LLM_MODELS = (
-  process.env.OPENROUTER_MODELS ??
-  [
-    "meta-llama/llama-3.1-8b-instruct:free",
-    "mistralai/mistral-7b-instruct:free",
-    "google/gemma-2-9b-it:free",
-    "openrouter/auto",
-  ].join(",")
-)
+// OpenRouter's free router selects from the models currently available.
+const LLM_MODELS = (process.env.OPENROUTER_MODELS ?? "openrouter/free")
   .split(",")
   .map((m) => m.trim())
   .filter(Boolean);
 
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
-import { generateEmbedding, openai } from "@/lib/openai";
+import { generateEmbedding } from "@/lib/embeddings";
+import { openai } from "@/lib/openai";
 import type { MemoryMatch, QueryControls, QueryResult } from "@/types";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
