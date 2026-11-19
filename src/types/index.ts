@@ -17,10 +17,24 @@ export interface MemoryMatch extends Memory {
   evidence_terms?: string[]
 }
 
+export type ChatMemoryMode = 'auto' | 'manual' | 'read-only'
+
+export interface ChatReference {
+  question: string
+  sourceIds: string[]
+}
+
+export interface ChatMemoryChange {
+  action: 'saved' | 'updated'
+  id: string
+  title: string | null
+}
+
 export interface QueryResult {
   answer: string
   sources: MemoryMatch[]
   meta?: QueryMeta
+  changedMemories?: Memory[]
 }
 
 export interface QueryMeta {
@@ -29,6 +43,7 @@ export interface QueryMeta {
   strictness?: number
   maxSources?: number
   durationMs?: number
+  memoryChanges?: ChatMemoryChange[]
 }
 
 export interface QueryControls {

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
-import { generateEmbedding } from "@/lib/embeddings";
+import { createMemory, MEMORY_COLUMNS, MemoryStoreError } from "@/lib/memory-store";
 import type { Memory } from "@/types";
 
 // Force dynamic rendering — API routes must not be statically evaluated at build time
@@ -30,7 +30,7 @@ export async function GET(request: NextRequest) {
 
     let query = supabase
       .from("memories")
-      .select("id, user_id, title, content, tags, created_at")
+      .select(MEMORY_COLUMNS)
       .eq("user_id", user.id);
 
     if (search) {
@@ -119,50 +119,22 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // ── Generate embedding ────────────────────────────────────────────────────
-    // We embed "title + content" so the title influences similarity matching.
-    const textToEmbed = title ? `${title}\n\n${content}` : content;
-
-    let embedding: number[];
-    try {
-      embedding = await generateEmbedding(textToEmbed);
-    } catch (embeddingError) {
-      const detail =
-        embeddingError instanceof Error
-          ? embeddingError.message
-          : String(embeddingError);
-      console.error("[POST /api/memories] Embedding error:", detail);
-      return NextResponse.json(
-        {
-          error: `Embedding failed: ${detail}`,
-        },
-        { status: 502 },
-      );
-    }
-
-    // ── Persist to Supabase ───────────────────────────────────────────────────
-    const { data, error } = await supabase
-      .from("memories")
-      .insert({
-        user_id: user.id,
-        title,
-        content,
-        tags,
-        embedding: JSON.stringify(embedding), // pgvector accepts a JSON array string
-      })
-      .select("id, user_id, title, content, tags, created_at")
-      .single();
-
-    if (error) {
-      console.error("[POST /api/memories] Supabase insert error:", error);
+    const data = await createMemory(supabase, user.id, { title, content, tags });
+    if (!data) {
       return NextResponse.json(
         { error: "Failed to save memory." },
         { status: 500 },
       );
     }
 
-    return NextResponse.json({ data: data as Memory }, { status: 201 });
+    return NextResponse.json({ data }, { status: 201 });
   } catch (err) {
+    if (err instanceof MemoryStoreError) {
+      console.error("[POST /api/memories] Save error:", err);
+      return err.kind === "embedding"
+        ? NextResponse.json({ error: "Failed to embed memory." }, { status: 502 })
+        : NextResponse.json({ error: "Failed to save memory." }, { status: 500 });
+    }
     console.error("[POST /api/memories] Unexpected error:", err);
     return NextResponse.json(
       { error: "An unexpected error occurred." },

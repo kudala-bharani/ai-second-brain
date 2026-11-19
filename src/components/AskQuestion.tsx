@@ -1,21 +1,29 @@
 'use client'
 
 import { useEffect, useLayoutEffect, useRef, useState, type FormEvent, type KeyboardEvent } from 'react'
-import { ArrowLeft, ArrowRight, ArrowUp, History, Loader2, MessageSquare, Plus, RotateCcw } from 'lucide-react'
+import { ArrowLeft, ArrowRight, ArrowUp, ArrowUpRight, Check, History, Loader2, MessageSquare, Plus, RotateCcw } from 'lucide-react'
 import TextareaAutosize from 'react-textarea-autosize'
-import type { ApiResponse, QueryHistoryItem, QueryResult } from '@/types'
+import type { ApiResponse, ChatMemoryMode, ChatReference, Memory, QueryHistoryItem, QueryResult } from '@/types'
 import AIResponse from '@/components/AIResponse'
 
 interface AskQuestionProps {
+  userId?: string
   availableMemoryIds: ReadonlySet<string>
   loadingMemories: boolean
   history: QueryHistoryItem[] | null
   historyError: boolean
   onRefreshHistory: () => void
   onOpenMemory: (id: string) => void
+  onMemoriesChanged: (memories: Memory[]) => void
 }
 
-type ChatTurn = { id: string; question: string } & (
+interface ChatRequest {
+  question: string
+  memoryMode: ChatMemoryMode
+  reference?: ChatReference
+}
+
+type ChatTurn = { id: string; request: ChatRequest } & (
   | { status: 'pending' }
   | { status: 'answered'; result: QueryResult }
   | { status: 'failed'; error: string }
@@ -30,17 +38,76 @@ const EXAMPLE_QUESTIONS = [
   'What did I learn recently?',
   'What goals have I written about?',
 ]
+const FIRST_MEMORY_EXAMPLE = 'Remember that I prefer morning meetings.'
+const MAX_REFERENCE_SOURCES = 5
 
 const HISTORY_DATE = new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric' })
 
+function getPreviousReference(turns: ChatTurn[], availableMemoryIds: ReadonlySet<string>): ChatReference | undefined {
+  for (let index = turns.length - 1; index >= 0; index--) {
+    const turn = turns[index]
+    if (turn.status !== 'answered') continue
+    const ids = new Set([
+      ...(turn.result.meta?.memoryChanges ?? []).map((change) => change.id),
+      ...turn.result.sources.map((source) => source.id),
+    ])
+    return {
+      question: turn.request.question,
+      sourceIds: Array.from(ids).filter((id) => availableMemoryIds.has(id)).slice(0, MAX_REFERENCE_SOURCES),
+    }
+  }
+}
+
+function ChatAnswer({
+  result,
+  availableMemoryIds,
+  onOpenMemory,
+}: Pick<AskQuestionProps, 'availableMemoryIds' | 'onOpenMemory'> & { result: QueryResult }) {
+  const changes = result.meta?.memoryChanges
+  return (
+    <>
+      {!!changes?.length && (
+        <ul className="chat-memory-changes" aria-label="Memory changes" role="list">
+          {changes.map((change) => (
+            <li key={change.id} className="chat-memory-change">
+              <Check size={16} aria-hidden="true" />
+              <p>
+                <strong>{change.action === 'updated' ? 'Memory updated' : 'Memory saved'}</strong>
+                <span>{change.title || 'Untitled memory'}</span>
+              </p>
+              {availableMemoryIds.has(change.id) && (
+                <button type="button" className="text-control" onClick={() => onOpenMemory(change.id)}>
+                  Open memory <ArrowUpRight size={15} aria-hidden="true" />
+                </button>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
+      <AIResponse result={result} availableMemoryIds={availableMemoryIds} onOpenMemory={onOpenMemory} />
+    </>
+  )
+}
+
 export default function AskQuestion({
+  userId,
   availableMemoryIds,
   loadingMemories,
   history,
   historyError,
   onRefreshHistory,
   onOpenMemory,
+  onMemoriesChanged,
 }: AskQuestionProps) {
+  const preferenceKey = userId ? `ai-second-brain:chat:auto-save-facts:v1:${userId}` : null
+  const [autoSaveFacts, setAutoSaveFacts] = useState(() => {
+    if (!preferenceKey || typeof window === 'undefined') return true
+    try {
+      return window.localStorage.getItem(preferenceKey) !== 'off'
+    } catch {
+      return true
+    }
+  })
   const [question, setQuestion] = useState('')
   const [turns, setTurns] = useState<ChatTurn[]>([])
   const [view, setView] = useState<View>({ mode: 'chat' })
@@ -55,7 +122,8 @@ export default function AskQuestion({
 
   const hasMemories = availableMemoryIds.size > 0
   const pending = turns.some((turn) => turn.status === 'pending')
-  const canAsk = hasMemories && !pending
+  const chatReady = !!userId && !loadingMemories
+  const canAsk = chatReady && !pending
 
   useEffect(() => () => requestRef.current?.abort(), [])
 
@@ -71,7 +139,12 @@ export default function AskQuestion({
     const latestTurn = conversation?.querySelector('.chat-turn:last-child')
     if (view.mode !== 'chat' || !conversation || !latestTurn || !followConversation.current) return
 
-    const turnStart = latestTurn.getBoundingClientRect().top
+    const lastTurn = turns[turns.length - 1]
+    const isMemoryAcknowledgement = lastTurn?.status === 'answered' && lastTurn.result.sources.length === 0
+    const latestContent = isMemoryAcknowledgement
+      ? latestTurn.querySelector('.chat-memory-changes') ?? latestTurn
+      : latestTurn
+    const turnStart = latestContent.getBoundingClientRect().top
       - conversation.getBoundingClientRect().top + conversation.scrollTop - 16
     conversation.scrollTop = Math.min(conversation.scrollHeight - conversation.clientHeight, turnStart)
   }, [turns, view.mode])
@@ -85,13 +158,12 @@ export default function AskQuestion({
     setTurns((previous) => previous.map((turn) => turn.id === next.id ? next : turn))
   }
 
-  async function ask(value: string, retryId?: string) {
-    const submittedQuestion = value.trim()
-    if (submittedQuestion.length < 3 || !hasMemories || requestRef.current) return
+  async function ask(submission: ChatRequest, retryId?: string) {
+    if (submission.question.length < 3 || !chatReady || requestRef.current) return
 
     const request = new AbortController()
     requestRef.current = request
-    const turn = { id: retryId ?? crypto.randomUUID(), question: submittedQuestion }
+    const turn = { id: retryId ?? crypto.randomUUID(), request: submission }
     const pendingTurn = { ...turn, status: 'pending' } as const
 
     setAnnouncement('')
@@ -106,7 +178,7 @@ export default function AskQuestion({
       const response = await fetch('/api/query', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ question: submittedQuestion }),
+        body: JSON.stringify(submission),
         signal: request.signal,
       })
       const payload: ApiResponse<QueryResult> | null = await response.json().catch(() => null)
@@ -119,8 +191,13 @@ export default function AskQuestion({
         })
         return
       }
-      updateTurn({ ...turn, status: 'answered', result: payload.data })
-      setAnnouncement('Answer ready.')
+      const result = payload.data
+      updateTurn({ ...turn, status: 'answered', result })
+      if (result.changedMemories?.length) onMemoriesChanged(result.changedMemories)
+      const changes = result.meta?.memoryChanges ?? []
+      setAnnouncement(changes.length === 1
+        ? (changes[0].action === 'updated' ? 'Memory updated.' : 'Memory saved.')
+        : changes.length ? `${changes.length} memory changes applied.` : 'Answer ready.')
       onRefreshHistory()
     } catch {
       if (!request.signal.aborted) {
@@ -133,9 +210,24 @@ export default function AskQuestion({
 
   function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
-    if (question.trim().length < 3 || !canAsk || requestRef.current) return
-    void ask(question)
+    const submittedQuestion = question.trim()
+    if (submittedQuestion.length < 3 || !canAsk || requestRef.current) return
+    void ask({
+      question: submittedQuestion,
+      memoryMode: autoSaveFacts ? 'auto' : 'manual',
+      reference: getPreviousReference(turns, availableMemoryIds),
+    })
     setQuestion('')
+  }
+
+  function changeAutoSaveFacts(enabled: boolean) {
+    setAutoSaveFacts(enabled)
+    if (!preferenceKey) return
+    try {
+      window.localStorage.setItem(preferenceKey, enabled ? 'on' : 'off')
+    } catch {
+      // The control still applies to this chat if browser storage is unavailable.
+    }
   }
 
   function handleKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
@@ -162,7 +254,7 @@ export default function AskQuestion({
           <MessageSquare size={17} aria-hidden="true" />
           <div>
             <h2 id="query-heading" ref={chatHeadingRef} tabIndex={-1}>Ask your notebook</h2>
-            <p>Answers with sources from your saved notes.</p>
+            <p>Ask a question or share a fact.</p>
           </div>
         </div>
         <div className="chat-toolbar">
@@ -197,7 +289,7 @@ export default function AskQuestion({
       >
         {turns.length === 0 ? (
           <div className="chat-empty">
-            {loadingMemories ? (
+            {!chatReady ? (
               <p className="field-detail">Loading your notes…</p>
             ) : hasMemories ? (
               <>
@@ -217,11 +309,18 @@ export default function AskQuestion({
               </>
             ) : (
               <>
-                <h3>Give your notebook something to work with</h3>
-                <p>Add a memory to start asking questions.</p>
-                <a className="text-control" href="#capture-section">
-                  <Plus size={16} aria-hidden="true" /> Add a memory
-                </a>
+                <h3>Start with something to remember</h3>
+                <p>Share a detail in chat or <a href="#capture-section" className="chat-capture-link">add a memory</a>.</p>
+                <ul className="chat-starters" aria-label="Suggested message">
+                  <li>
+                    <button type="button" onClick={() => {
+                      setQuestion(FIRST_MEMORY_EXAMPLE)
+                      composerRef.current?.focus()
+                    }}>
+                      {FIRST_MEMORY_EXAMPLE} <ArrowRight size={15} aria-hidden="true" />
+                    </button>
+                  </li>
+                </ul>
               </>
             )}
           </div>
@@ -231,12 +330,12 @@ export default function AskQuestion({
               <li className="chat-turn" key={turn.id}>
                 <div className="chat-question" tabIndex={-1}>
                   <span>You</span>
-                  <p>{turn.question}</p>
+                  <p>{turn.request.question}</p>
                 </div>
                 {turn.status === 'pending' && (
                   <div className="chat-turn-status" role="status">
                     <Loader2 size={16} className="status-spinner" aria-hidden="true" />
-                    Searching your notes…
+                    Working on your message…
                   </div>
                 )}
                 {turn.status === 'failed' && (
@@ -246,14 +345,14 @@ export default function AskQuestion({
                       onClick={(event) => {
                         event.currentTarget.closest('.chat-turn')
                           ?.querySelector<HTMLElement>('.chat-question')?.focus({ preventScroll: true })
-                        void ask(turn.question, turn.id)
+                        void ask(turn.request, turn.id)
                       }}>
                       <RotateCcw size={15} aria-hidden="true" /> Retry
                     </button>
                   </div>
                 )}
                 {turn.status === 'answered' && (
-                  <AIResponse result={turn.result} availableMemoryIds={availableMemoryIds} onOpenMemory={onOpenMemory} />
+                  <ChatAnswer result={turn.result} availableMemoryIds={availableMemoryIds} onOpenMemory={onOpenMemory} />
                 )}
               </li>
             ))}
@@ -263,7 +362,7 @@ export default function AskQuestion({
 
       {view.mode === 'chat' ? (
         <form className="chat-composer" onSubmit={handleSubmit}>
-          <label htmlFor="notebook-question" className="sr-only">Your question</label>
+          <label htmlFor="notebook-question" className="sr-only">Your message</label>
           <div className="chat-compose-row">
             <TextareaAutosize
               ref={composerRef}
@@ -271,8 +370,8 @@ export default function AskQuestion({
               value={question}
               onChange={(event) => setQuestion(event.target.value)}
               onKeyDown={handleKeyDown}
-              placeholder={turns.length ? 'Ask another question…' : 'What do your notes say about…'}
-              disabled={!hasMemories}
+              placeholder="Ask or share a detail…"
+              disabled={!chatReady}
               maxLength={2000}
               minRows={1}
               maxRows={4}
@@ -282,9 +381,15 @@ export default function AskQuestion({
               <span>Send</span><ArrowUp size={17} aria-hidden="true" />
             </button>
           </div>
-          <p className="field-detail chat-keyboard-hint">
-            <kbd>Enter</kbd> to send <span aria-hidden="true">·</span> <kbd>Shift</kbd> + <kbd>Enter</kbd> for a new line
-          </p>
+          <div className="chat-composer-footer">
+            <label className="chat-auto-save">
+              <input type="checkbox" checked={autoSaveFacts} disabled={!chatReady} onChange={(event) => changeAutoSaveFacts(event.target.checked)} />
+              Auto-save facts
+            </label>
+            <p className="field-detail chat-keyboard-hint">
+              <kbd>Enter</kbd> to send <span aria-hidden="true">·</span> <kbd>Shift</kbd> + <kbd>Enter</kbd> for a new line
+            </p>
+          </div>
         </form>
       ) : (
         <div className="chat-scroll chat-history-view" key={view.mode}>
@@ -322,13 +427,13 @@ export default function AskQuestion({
                 </button>
                 <button type="button" className="btn-secondary chat-tool" disabled={!canAsk} onClick={() => {
                   showView({ mode: 'chat' })
-                  void ask(view.item.question)
+                  void ask({ question: view.item.question, memoryMode: 'read-only' })
                 }}>
                   <RotateCcw size={15} aria-hidden="true" /> Ask again
                 </button>
               </div>
               <h3 ref={historyHeadingRef} tabIndex={-1} className="chat-saved-question">{view.item.question}</h3>
-              <AIResponse key={view.item.id} result={view.item.result} availableMemoryIds={availableMemoryIds} onOpenMemory={onOpenMemory} />
+              <ChatAnswer key={view.item.id} result={view.item.result} availableMemoryIds={availableMemoryIds} onOpenMemory={onOpenMemory} />
             </>
           )}
         </div>
