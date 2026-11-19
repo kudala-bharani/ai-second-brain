@@ -17,7 +17,7 @@ export default function DashboardPage() {
   const router   = useRouter()
   const supabase = createClient()
 
-  const [userEmail, setUserEmail]   = useState<string>('')
+  const [user, setUser] = useState<{ id: string; email?: string } | null>(null)
   const [memories,  setMemories]    = useState<Memory[]>([])
   const [loadingMem, setLoadingMem] = useState(true)
   const [queryHistory, setQueryHistory] = useState<QueryHistoryItem[] | null>(null)
@@ -35,7 +35,7 @@ export default function DashboardPage() {
   useEffect(() => {
     supabase.auth.getUser().then(({ data: { user } }) => {
       if (!user) { router.push('/auth/login'); return }
-      setUserEmail(user.email ?? '')
+      setUser({ id: user.id, email: user.email })
     })
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -73,8 +73,16 @@ export default function DashboardPage() {
 
   // ── Handlers ──────────────────────────────────────────────────────────────────
 
-  function handleMemoryAdded(memory: Memory) {
-    setMemories((prev) => [memory, ...prev])
+  function handleMemoriesChanged(changes: Memory[]) {
+    setMemories((previous) => {
+      const changed = new Map(changes.map((memory) => [memory.id, memory]))
+      const updated = previous.map((memory) => {
+        const replacement = changed.get(memory.id)
+        changed.delete(memory.id)
+        return replacement ?? memory
+      })
+      return [...changed.values(), ...updated]
+    })
   }
 
   function handleMemoryDeleted(id: string) {
@@ -85,8 +93,8 @@ export default function DashboardPage() {
     setRevealMemory((previous) => ({ id, request: (previous?.request ?? 0) + 1 }))
   }, [])
 
-  function handleMemoryUpdated(memory: Memory) {
-    setMemories((prev) => prev.map((m) => (m.id === memory.id ? memory : m)))
+  function handleMemoryChanged(memory: Memory) {
+    handleMemoriesChanged([memory])
   }
 
   // ── Logout ────────────────────────────────────────────────────────────────────
@@ -108,7 +116,7 @@ export default function DashboardPage() {
 
   return (
     <div className="workspace">
-      <Header userEmail={userEmail} onLogout={handleLogout} />
+      <Header userEmail={user?.email ?? ''} onLogout={handleLogout} />
 
       <main className="workspace-main">
         <section className="workspace-width workspace-overview" aria-labelledby="workspace-title">
@@ -143,12 +151,15 @@ export default function DashboardPage() {
 
         <div className="workspace-width workspace-columns">
           <AskQuestion
+            key={user?.id}
+            userId={user?.id}
             availableMemoryIds={memoryIds}
             loadingMemories={loadingMem}
             history={queryHistory}
             historyError={historyError}
             onRefreshHistory={refreshHistory}
             onOpenMemory={handleOpenMemory}
+            onMemoriesChanged={handleMemoriesChanged}
           />
 
           <div className="workspace-column">
@@ -171,7 +182,7 @@ export default function DashboardPage() {
                 <MemoryList
                   memories={memories}
                   onDelete={handleMemoryDeleted}
-                  onUpdate={handleMemoryUpdated}
+                  onUpdate={handleMemoryChanged}
                   revealMemory={revealMemory}
                 />
               )}
@@ -182,7 +193,7 @@ export default function DashboardPage() {
                 <Plus size={17} aria-hidden="true" />
                 <h2 id="capture-heading">Add memory</h2>
               </div>
-              <AddMemory onMemoryAdded={handleMemoryAdded} />
+              <AddMemory onMemoryAdded={handleMemoryChanged} />
             </section>
           </div>
         </div>

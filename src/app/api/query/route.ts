@@ -7,16 +7,28 @@ const LLM_MODELS = (process.env.OPENROUTER_MODELS ?? "openrouter/free")
   .filter(Boolean);
 
 import { NextRequest, NextResponse } from "next/server";
+import { handleChatMemory } from "@/lib/chat-memory";
+import { splitChatSentences } from "@/lib/chat-memory-intent";
 import { createClient } from "@/lib/supabase/server";
 import { generateEmbedding } from "@/lib/embeddings";
 import { openai } from "@/lib/openai";
-import type { MemoryMatch, QueryControls, QueryResult } from "@/types";
+import type { ChatMemoryMode, ChatReference, MemoryMatch, QueryControls, QueryResult } from "@/types";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
 const MATCH_THRESHOLD = 0.45; // minimum cosine similarity to include a note
 const MATCH_COUNT = 5; // max notes to retrieve as context
 const MAX_CONTEXT_CHARS = 8000; // guard against enormous prompts
+const MEMORY_ID = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i;
+
+function parseReference(value: unknown): ChatReference | undefined {
+  if (!value || typeof value !== "object" || !("question" in value)
+    || typeof value.question !== "string") return undefined;
+  const sourceIds = "sourceIds" in value && Array.isArray(value.sourceIds)
+    ? value.sourceIds.slice(0, 5).filter((id): id is string => typeof id === "string" && MEMORY_ID.test(id))
+    : [];
+  return { question: value.question.slice(0, 2000), sourceIds: [...new Set(sourceIds)] };
+}
 
 // ─── System Prompt ────────────────────────────────────────────────────────────
 
@@ -121,9 +133,10 @@ export async function POST(request: NextRequest) {
         { status: 401 },
       );
     }
+    const userId = user.id;
 
     // ── 2. Parse + validate request body ────────────────────────────────────
-    let body: { question?: string; controls?: QueryControls };
+    let body: { question?: string; controls?: QueryControls; memoryMode?: ChatMemoryMode; reference?: unknown };
     try {
       body = await request.json();
     } catch {
@@ -133,7 +146,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const question = body.question?.trim();
+    const question = typeof body?.question === "string" ? body.question.trim() : "";
     if (!question || question.length < 3) {
       return NextResponse.json(
         { error: "Question must be at least 3 characters." },
@@ -155,13 +168,53 @@ export async function POST(request: NextRequest) {
         ? controls.modelOrder.map((m) => m.trim()).filter(Boolean)
         : LLM_MODELS;
 
-    // ── 3. Generate embedding for the question ───────────────────────────────
     const startTime = Date.now();
+    const memoryMode = body.memoryMode === "auto" || body.memoryMode === "manual"
+      ? body.memoryMode
+      : "read-only";
+    const memoryOutcome = await handleChatMemory(
+      supabase, userId, question, memoryMode, parseReference(body.reference),
+    ).catch(() => null);
+
+    async function respond(result: QueryResult, saveHistory = true) {
+      if (memoryOutcome?.changes?.length) {
+        result.meta = { ...result.meta, memoryChanges: memoryOutcome.changes };
+      }
+      if (memoryOutcome?.memories?.length) result.changedMemories = memoryOutcome.memories;
+      if (saveHistory || memoryOutcome?.changes?.length) {
+        try {
+          const { error } = await supabase.from("query_history").insert({
+            user_id: userId,
+            question,
+            answer: result.answer,
+            sources: result.sources,
+            meta: result.meta ?? {},
+            settings: { strictness, maxSources, modelOrder: runtimeModels },
+          });
+          if (error) console.warn("[query] could not save history");
+        } catch {
+          console.warn("[query] could not save history");
+        }
+      }
+      return NextResponse.json({ data: result });
+    }
+
+    if (memoryOutcome?.reply) {
+      return respond({ answer: memoryOutcome.reply, sources: [] });
+    }
+
+    const partialReply = "I saved the new information. I couldn’t search your notes for your question. Please try asking it again.";
+    const searchQuestion = memoryOutcome?.changes?.length && question.endsWith("?")
+      ? splitChatSentences(question).at(-1) ?? question
+      : question;
+
+    // ── 3. Generate embedding for the question ───────────────────────────────
     let queryEmbedding: number[];
     try {
-      queryEmbedding = await generateEmbedding(question);
+      queryEmbedding = await generateEmbedding(searchQuestion);
     } catch (err) {
       console.error("[query] embedding generation failed:", err);
+      if (memoryOutcome?.changes?.length) return respond({ answer: partialReply, sources: [] });
       return NextResponse.json(
         { error: "Failed to process your question. Please try again." },
         { status: 502 },
@@ -180,6 +233,7 @@ export async function POST(request: NextRequest) {
 
     if (rpcError) {
       console.error("[query] vector search failed:", rpcError);
+      if (memoryOutcome?.changes?.length) return respond({ answer: partialReply, sources: [] });
       return NextResponse.json(
         { error: "Vector search failed. Please try again." },
         { status: 500 },
@@ -195,7 +249,7 @@ export async function POST(request: NextRequest) {
           "I couldn't find any notes relevant to your question. Try adding more memories or rephrasing your question.",
         sources: [],
       };
-      return NextResponse.json({ data: result });
+      return respond(result, false);
     }
 
     // ── 6. Build context blocks (truncate if needed) ─────────────────────────
@@ -252,7 +306,7 @@ export async function POST(request: NextRequest) {
           break;
         } catch (modelErr) {
           lastError = modelErr;
-          console.warn(`[query] model failed: ${model}`, modelErr);
+          console.warn(`[query] model failed: ${model}`);
           continue;
         }
       }
@@ -281,8 +335,8 @@ export async function POST(request: NextRequest) {
         evidence_terms: terms,
         evidence_snippet: extractEvidenceSnippet(s.content, terms),
       }));
-    } catch (err) {
-      console.error("[query] LLM call failed:", err);
+    } catch {
+      console.error("[query] LLM call failed");
       const result: QueryResult = {
         answer: buildProviderFallbackAnswer(sources),
         sources: sources.slice(0, Math.min(3, sources.length)).map((s) => ({
@@ -297,20 +351,7 @@ export async function POST(request: NextRequest) {
         },
       };
 
-      await supabase.from("query_history").insert({
-        user_id: user.id,
-        question,
-        answer: result.answer,
-        sources: result.sources,
-        meta: result.meta ?? {},
-        settings: {
-          strictness,
-          maxSources,
-          modelOrder: runtimeModels,
-        },
-      });
-
-      return NextResponse.json({ data: result });
+      return respond(result);
     }
 
     // ── 8. Return answer + sources ───────────────────────────────────────────
@@ -326,21 +367,7 @@ export async function POST(request: NextRequest) {
       },
     };
 
-    // Persist query history (best effort, non-blocking for user flow).
-    await supabase.from("query_history").insert({
-      user_id: user.id,
-      question,
-      answer: result.answer,
-      sources: result.sources,
-      meta: result.meta ?? {},
-      settings: {
-        strictness,
-        maxSources,
-        modelOrder: runtimeModels,
-      },
-    });
-
-    return NextResponse.json({ data: result });
+    return respond(result);
   } catch (err) {
     console.error("[query] unexpected error:", err);
     return NextResponse.json(

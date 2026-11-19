@@ -1,6 +1,6 @@
 import { createClient } from "@/lib/supabase/server";
 import { NextResponse } from "next/server";
-import { generateEmbedding } from "@/lib/embeddings";
+import { MemoryStoreError, updateMemory } from "@/lib/memory-store";
 
 export const dynamic = "force-dynamic";
 
@@ -100,35 +100,19 @@ export async function PATCH(
       return NextResponse.json({ error: "Content is required." }, { status: 400 });
     }
 
-    const textToEmbed = title ? `${title}\n\n${content}` : content;
-    let embedding: number[];
-    try {
-      embedding = await generateEmbedding(textToEmbed);
-    } catch (err) {
-      const detail = err instanceof Error ? err.message : String(err);
-      return NextResponse.json({ error: `Embedding failed: ${detail}` }, { status: 502 });
-    }
-
-    const { data, error } = await supabase
-      .from("memories")
-      .update({
-        title,
-        content,
-        tags,
-        embedding: JSON.stringify(embedding),
-      })
-      .eq("id", id)
-      .eq("user_id", user.id)
-      .select("id, user_id, title, content, tags, created_at")
-      .single();
-
-    if (error) {
-      console.error("[PATCH /api/memories/:id] Supabase error:", error);
+    const data = await updateMemory(supabase, user.id, id, { title, content, tags });
+    if (!data) {
       return NextResponse.json({ error: "Failed to update memory" }, { status: 500 });
     }
 
     return NextResponse.json({ data }, { status: 200 });
   } catch (error) {
+    if (error instanceof MemoryStoreError) {
+      console.error("[PATCH /api/memories/:id] Update error:", error);
+      return error.kind === "embedding"
+        ? NextResponse.json({ error: "Failed to embed memory." }, { status: 502 })
+        : NextResponse.json({ error: "Failed to update memory" }, { status: 500 });
+    }
     console.error("[PATCH /api/memories/:id] Unexpected error:", error);
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });
   }
