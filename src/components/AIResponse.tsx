@@ -1,9 +1,8 @@
 'use client'
 
-import { useId, useState } from 'react'
+import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
 import type { QueryResult, MemoryMatch } from '@/types'
-import { Check, ChevronDown, ChevronUp, Copy, X } from 'lucide-react'
-import { formatDistanceToNow } from 'date-fns'
+import { ArrowUpRight, Check, ChevronDown, Copy } from 'lucide-react'
 import './response.css'
 
 // ─── Markdown renderer (lightweight, no external lib) ─────────────────────────
@@ -238,152 +237,112 @@ function renderHighlightedText(text: string, terms: string[]): React.ReactNode {
   )
 }
 
-function SourceNote({ source, index }: { source: MemoryMatch; index: number }) {
-  const [expanded, setExpanded] = useState(false)
-  const excerptId = useId()
-  const preview = source.content.slice(0, 180)
-  const snippet = source.evidence_snippet?.trim() || preview
-  const terms = source.evidence_terms ?? []
-  const isLong = source.content.length > 180
-  const similarityPct = Math.round((source.similarity ?? 0) * 100)
+function SourceExcerpt({ source }: { source: MemoryMatch }) {
+  const content = source.content.trim()
+  const snippet = source.evidence_snippet?.trim() || content.slice(0, 180)
+  const start = content.indexOf(snippet)
 
   return (
-    <li className="answer-source">
-      <div className="answer-source-head">
-        <h4>
-          <span className="citation-index">[{index + 1}]</span>
-          {source.title ?? 'Untitled note'}
-        </h4>
-        <span className="answer-meta">{similarityPct}% match</span>
-      </div>
-      <p className="answer-meta">
-        {formatDistanceToNow(new Date(source.created_at), { addSuffix: true })}
-      </p>
-      <p id={excerptId} className="answer-source-excerpt">
-        {expanded ? source.content : renderHighlightedText(snippet, terms)}
-        {!expanded && isLong && '…'}
-      </p>
-      {isLong && (
-        <button
-          type="button"
-          className="btn btn-ghost btn-sm answer-source-toggle"
-          aria-controls={excerptId}
-          aria-expanded={expanded}
-          onClick={() => setExpanded((previous) => !previous)}
-        >
-          {expanded ? (
-            <><ChevronUp size={16} aria-hidden="true" /> Show less</>
-          ) : (
-            <><ChevronDown size={16} aria-hidden="true" /> Show full note</>
-          )}
-        </button>
-      )}
-    </li>
-  )
-}
-
-function EmptyState() {
-  return (
-    <div className="answer-reading answer-empty">
-      <p>No response yet</p>
-      <p>Ask a question above to see an answer and the notes it draws from.</p>
-    </div>
+    <blockquote className="answer-source-excerpt">
+      {start > 0 && '…'}
+      {renderHighlightedText(snippet, source.evidence_terms ?? [])}
+      {start >= 0 && start + snippet.length < content.length && '…'}
+    </blockquote>
   )
 }
 
 interface AIResponseProps {
-  result: QueryResult | null
-  question: string
-  onClear?: () => void
+  result: QueryResult
+  onOpenMemory: (id: string) => void
+  availableMemoryIds: ReadonlySet<string>
 }
 
-export default function AIResponse({ result, question, onClear }: AIResponseProps) {
-  const [copied, setCopied] = useState(false)
-  const [sourcesExpanded, setSourcesExpanded] = useState(true)
+export default function AIResponse({ result, onOpenMemory, availableMemoryIds }: AIResponseProps) {
+  const [copyStatus, setCopyStatus] = useState('')
+  const [selectedSourceId, setSelectedSourceId] = useState<string | null>(null)
   const answerHeadingId = useId()
-  const sourcesId = useId()
+  const sourcePreviewId = useId()
+  const sourcePreviewRef = useRef<HTMLDivElement>(null)
+  const { answer, sources } = result
+  const selectedSource = sources.find((source) => source.id === selectedSourceId)
+  const copied = copyStatus === 'Answer copied'
 
-  if (!result) {
-    return <EmptyState />
-  }
+  useLayoutEffect(() => {
+    if (selectedSourceId) {
+      sourcePreviewRef.current?.scrollIntoView({ block: 'nearest', behavior: 'instant' })
+    }
+  }, [selectedSourceId])
 
-  const { answer, sources, meta } = result
-  const hasNoSources = !sources || sources.length === 0
+  useEffect(() => {
+    if (!copyStatus) return
+    const timer = window.setTimeout(() => setCopyStatus(''), 2000)
+    return () => window.clearTimeout(timer)
+  }, [copyStatus])
 
   async function handleCopy() {
     try {
       await navigator.clipboard.writeText(answer)
-      setCopied(true)
-      setTimeout(() => setCopied(false), 2000)
+      setCopyStatus('Answer copied')
     } catch {
-      // The browser may deny clipboard access.
+      setCopyStatus('Could not copy answer')
     }
   }
 
   return (
     <section className="answer-reading" aria-labelledby={answerHeadingId}>
-      {question && (
-        <dl className="answer-question">
-          <dt>Your question</dt>
-          <dd>{question}</dd>
-        </dl>
-      )}
-
       <header className="answer-header">
-        <div>
-          <h3 id={answerHeadingId}>Answer</h3>
-          <div className="answer-metadata">
-            {!hasNoSources && <span className="answer-grounded">Grounded in your notes</span>}
-            {meta?.modelUsed && <span className="answer-meta">{meta.modelUsed}</span>}
-          </div>
-        </div>
-        <div className="answer-actions">
-          <button type="button" className="btn btn-secondary btn-sm" onClick={handleCopy}>
-            {copied ? <Check size={16} aria-hidden="true" /> : <Copy size={16} aria-hidden="true" />}
-            {copied ? 'Copied' : 'Copy answer'}
-          </button>
-          <span className="sr-only" role="status">{copied ? 'Answer copied' : ''}</span>
-          {onClear && (
-            <button
-              type="button"
-              className="icon-button"
-              onClick={onClear}
-              aria-label="Clear response"
-              title="Clear response"
-            >
-              <X size={16} aria-hidden="true" />
-            </button>
-          )}
-        </div>
+        <h3 id={answerHeadingId}>Answer</h3>
+        <button type="button" className="btn btn-ghost btn-sm" onClick={handleCopy}>
+          {copied ? <Check size={15} aria-hidden="true" /> : <Copy size={15} aria-hidden="true" />}
+          {copied ? 'Copied' : 'Copy answer'}
+        </button>
+        <span className="sr-only" role="status">{copyStatus}</span>
       </header>
 
       <div className="answer-markdown">{renderMarkdown(answer)}</div>
 
-      {hasNoSources && (
-        <p className="notice notice-warning answer-no-sources">
-          No relevant memories were found. Add more notes about this topic, or try rephrasing your question.
-        </p>
-      )}
-
-      {!hasNoSources && (
+      {sources.length > 0 && (
         <div className="answer-sources">
-          <h3>
-            <button
-              type="button"
-              className="answer-sources-toggle"
-              aria-controls={sourcesId}
-              aria-expanded={sourcesExpanded}
-              onClick={() => setSourcesExpanded((previous) => !previous)}
-            >
-              <span>Source notes <span className="answer-meta">({sources.length})</span></span>
-              {sourcesExpanded ? <ChevronUp size={18} aria-hidden="true" /> : <ChevronDown size={18} aria-hidden="true" />}
-            </button>
-          </h3>
-          <ol className="answer-source-list" id={sourcesId} hidden={!sourcesExpanded} role="list">
-            {sourcesExpanded && sources.map((source, index) => (
-              <SourceNote key={source.id} source={source} index={index} />
-            ))}
-          </ol>
+          <p className="answer-sources-label">Sources</p>
+          <ul className="answer-citations" aria-label="Source notes" role="list">
+            {sources.map((source, index) => {
+              const title = source.title || 'Untitled note'
+              return (
+                <li key={source.id}>
+                  <button
+                    type="button"
+                    className="answer-citation"
+                    aria-label={`Source ${index + 1}: ${title}`}
+                    aria-controls={sourcePreviewId}
+                    aria-expanded={selectedSourceId === source.id}
+                    onClick={() => setSelectedSourceId((id) => id === source.id ? null : source.id)}
+                  >
+                    <span className="citation-index" aria-hidden="true">{index + 1}</span>
+                    <span className="answer-citation-title">{title}</span>
+                    <ChevronDown size={14} aria-hidden="true" />
+                  </button>
+                </li>
+              )
+            })}
+          </ul>
+          <div id={sourcePreviewId} ref={sourcePreviewRef} className="answer-source-preview" hidden={!selectedSource}>
+            {selectedSource && (
+              <>
+                <SourceExcerpt source={selectedSource} />
+                {availableMemoryIds.has(selectedSource.id) ? (
+                  <button
+                    type="button"
+                    className="btn btn-ghost btn-sm answer-source-open"
+                    onClick={() => onOpenMemory(selectedSource.id)}
+                  >
+                    Open memory <ArrowUpRight size={15} aria-hidden="true" />
+                  </button>
+                ) : (
+                  <p className="field-detail answer-source-unavailable">Original memory unavailable</p>
+                )}
+              </>
+            )}
+          </div>
         </div>
       )}
     </section>

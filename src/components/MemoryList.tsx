@@ -1,6 +1,6 @@
 'use client'
 
-import { useId, useState } from 'react'
+import { useEffect, useId, useRef, useState } from 'react'
 import { formatDistanceToNow } from 'date-fns'
 import { Trash2, Loader2, ChevronDown, ChevronUp, Pencil } from 'lucide-react'
 import type { Memory } from '@/types'
@@ -11,9 +11,11 @@ interface MemoryCardProps {
   memory: Memory
   onDelete: (id: string) => void
   onUpdate: (memory: Memory) => void
+  revealRequest?: number
+  onReveal: (request: number) => void
 }
 
-function MemoryCard({ memory, onDelete, onUpdate }: MemoryCardProps) {
+function MemoryCard({ memory, onDelete, onUpdate, revealRequest, onReveal }: MemoryCardProps) {
   const [deleting,  setDeleting]  = useState(false)
   const [expanded,  setExpanded]  = useState(false)
   const [showConfirm, setShowConfirm] = useState(false)
@@ -24,6 +26,7 @@ function MemoryCard({ memory, onDelete, onUpdate }: MemoryCardProps) {
   const [tagsInput, setTagsInput] = useState((memory.tags ?? []).join(', '))
 
   const editorId = useId()
+  const headingRef = useRef<HTMLHeadingElement>(null)
   const PREVIEW_LENGTH = 160
 
   const needsExpand  = memory.content.length > PREVIEW_LENGTH
@@ -35,6 +38,19 @@ function MemoryCard({ memory, onDelete, onUpdate }: MemoryCardProps) {
 
   // Word count
   const wordCount = memory.content.split(/\s+/).filter(Boolean).length
+
+  useEffect(() => {
+    const heading = headingRef.current
+    if (revealRequest === undefined || !heading) return
+    if (needsExpand && !expanded) {
+      setExpanded(true)
+      return
+    }
+
+    heading.focus({ preventScroll: true })
+    heading.scrollIntoView({ block: 'center', behavior: 'instant' })
+    onReveal(revealRequest)
+  }, [expanded, needsExpand, onReveal, revealRequest])
 
   async function handleSaveEdit() {
     setSaving(true)
@@ -98,7 +114,7 @@ function MemoryCard({ memory, onDelete, onUpdate }: MemoryCardProps) {
     <article className="memory-entry" aria-busy={deleting || saving}>
       <div className="memory-entry-header">
         <div className="memory-entry-heading">
-          <h3 id={`${editorId}-heading`}>{memory.title || 'Untitled note'}</h3>
+          <h3 id={`${editorId}-heading`} ref={headingRef} tabIndex={-1}>{memory.title || 'Untitled note'}</h3>
           <p className="field-detail">
             <time dateTime={memory.created_at}>{timeAgo}</time>
             <span aria-hidden="true"> · </span>
@@ -191,15 +207,23 @@ function MemoryCard({ memory, onDelete, onUpdate }: MemoryCardProps) {
   )
 }
 
+export interface MemoryRevealRequest {
+  id: string
+  request: number
+}
+
 interface MemoryListProps {
   memories: Memory[]
   onDelete: (id: string) => void
   onUpdate: (memory: Memory) => void
+  revealMemory: MemoryRevealRequest | null
 }
 
-export default function MemoryList({ memories, onDelete, onUpdate }: MemoryListProps) {
+export default function MemoryList({ memories, onDelete, onUpdate, revealMemory }: MemoryListProps) {
   const [search, setSearch] = useState('')
   const [tagFilter, setTagFilter] = useState('')
+  const [lastRevealRequest, setLastRevealRequest] = useState<number | null>(null)
+  const pendingReveal = revealMemory?.request !== lastRevealRequest ? revealMemory : null
 
   const filtered = memories.filter((m) => {
     const matchesSearch = search.trim()
@@ -211,6 +235,17 @@ export default function MemoryList({ memories, onDelete, onUpdate }: MemoryListP
       : true
     return matchesSearch && matchesTag
   })
+
+  const revealHiddenByFilter = pendingReveal !== null &&
+    memories.some((memory) => memory.id === pendingReveal.id) &&
+    !filtered.some((memory) => memory.id === pendingReveal.id)
+
+  useEffect(() => {
+    if (!revealHiddenByFilter) return
+
+    setSearch('')
+    setTagFilter('')
+  }, [revealHiddenByFilter])
 
   return (
     <div className="memory-list">
@@ -262,7 +297,14 @@ export default function MemoryList({ memories, onDelete, onUpdate }: MemoryListP
       ) : (
         <div className="memory-entries">
           {filtered.map((memory) => (
-            <MemoryCard key={memory.id} memory={memory} onDelete={onDelete} onUpdate={onUpdate} />
+            <MemoryCard
+              key={memory.id}
+              memory={memory}
+              onDelete={onDelete}
+              onUpdate={onUpdate}
+              revealRequest={pendingReveal?.id === memory.id ? pendingReveal.request : undefined}
+              onReveal={setLastRevealRequest}
+            />
           ))}
         </div>
       )}

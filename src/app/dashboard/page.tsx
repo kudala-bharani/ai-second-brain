@@ -1,17 +1,16 @@
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useMemo } from 'react'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
-import type { Memory, QueryHistoryItem, QueryResult } from '@/types'
+import type { Memory, QueryHistoryItem } from '@/types'
 
 import Header     from '@/components/Header'
 import AddMemory  from '@/components/AddMemory'
 import AskQuestion from '@/components/AskQuestion'
-import AIResponse from '@/components/AIResponse'
-import MemoryList from '@/components/MemoryList'
+import MemoryList, { type MemoryRevealRequest } from '@/components/MemoryList'
 
-import { ArrowDown, ArrowUpRight, BookOpen, MessageSquare, Plus } from 'lucide-react'
+import { ArrowDown, BookOpen, Plus } from 'lucide-react'
 import './workspace.css'
 
 export default function DashboardPage() {
@@ -21,11 +20,16 @@ export default function DashboardPage() {
   const [userEmail, setUserEmail]   = useState<string>('')
   const [memories,  setMemories]    = useState<Memory[]>([])
   const [loadingMem, setLoadingMem] = useState(true)
-  const [queryResult, setQueryResult] = useState<QueryResult | null>(null)
-  const [activeQuery,  setActiveQuery]  = useState<string>('')
-  const [queryHistory, setQueryHistory] = useState<QueryHistoryItem[]>([])
-  const [prefillQuestion, setPrefillQuestion] = useState('')
-  const [autoSubmitNonce, setAutoSubmitNonce] = useState(0)
+  const [queryHistory, setQueryHistory] = useState<QueryHistoryItem[] | null>(null)
+  const [historyError, setHistoryError] = useState(false)
+  const [historyVersion, setHistoryVersion] = useState(0)
+  const [revealMemory, setRevealMemory] = useState<MemoryRevealRequest | null>(null)
+  const memoryIds = useMemo(() => new Set(memories.map((memory) => memory.id)), [memories])
+
+  const refreshHistory = useCallback(() => {
+    setHistoryError(false)
+    setHistoryVersion((version) => version + 1)
+  }, [])
 
   // ── Fetch user ───────────────────────────────────────────────────────────────
   useEffect(() => {
@@ -52,19 +56,20 @@ export default function DashboardPage() {
   useEffect(() => { fetchMemories() }, [fetchMemories])
 
   useEffect(() => {
+    const request = new AbortController()
     async function fetchQueryHistory() {
       try {
-        const res = await fetch('/api/query-history')
+        const res = await fetch('/api/query-history', { signal: request.signal })
+        if (!res.ok) throw new Error('Unable to load query history')
         const json = await res.json()
-        if (res.ok && json.data) {
-          setQueryHistory(json.data as QueryHistoryItem[])
-        }
-      } catch (err) {
-        console.error('Failed to fetch query history:', err)
+        if (!request.signal.aborted) setQueryHistory(json.data as QueryHistoryItem[])
+      } catch {
+        if (!request.signal.aborted) setHistoryError(true)
       }
     }
-    fetchQueryHistory()
-  }, [])
+    void fetchQueryHistory()
+    return () => request.abort()
+  }, [historyVersion])
 
   // ── Handlers ──────────────────────────────────────────────────────────────────
 
@@ -74,38 +79,11 @@ export default function DashboardPage() {
 
   function handleMemoryDeleted(id: string) {
     setMemories((prev) => prev.filter((m) => m.id !== id))
-    // If the deleted memory was a source in the current result, clear it
-    if (queryResult?.sources.some((s) => s.id === id)) {
-      setQueryResult(null)
-    }
   }
 
-  function handleQueryResult(result: QueryResult, question: string) {
-    setQueryResult(result)
-    setActiveQuery(question)
-    setQueryHistory((prev) => [
-      {
-        id: crypto.randomUUID(),
-        question,
-        result,
-        createdAt: new Date().toISOString(),
-        settingsSnapshot: {},
-      },
-      ...prev.slice(0, 9),
-    ])
-    // Scroll to response on mobile
-    setTimeout(() => {
-      document.getElementById('ai-response-section')?.scrollIntoView({
-        behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth',
-        block: 'start',
-      })
-    }, 100)
-  }
-
-  function handleClearResult() {
-    setQueryResult(null)
-    setActiveQuery('')
-  }
+  const handleOpenMemory = useCallback((id: string) => {
+    setRevealMemory((previous) => ({ id, request: (previous?.request ?? 0) + 1 }))
+  }, [])
 
   function handleMemoryUpdated(memory: Memory) {
     setMemories((prev) => prev.map((m) => (m.id === memory.id ? memory : m)))
@@ -126,7 +104,7 @@ export default function DashboardPage() {
     0
   )
   const taggedMemories = memories.filter((m) => (m.tags?.length ?? 0) > 0).length
-  const recentQuestions = queryHistory.length
+  const recentQuestions = queryHistory?.length ?? 0
 
   return (
     <div className="workspace">
@@ -164,50 +142,14 @@ export default function DashboardPage() {
         </section>
 
         <div className="workspace-width workspace-columns">
-          <section id="ai-response-section" className="workspace-sheet query-sheet" aria-labelledby="query-heading" tabIndex={-1}>
-            <div className="workspace-section-heading">
-              <MessageSquare size={17} aria-hidden="true" />
-              <div>
-                <h2 id="query-heading">Ask your notebook</h2>
-                <p>Get an answer with sources from your saved notes.</p>
-              </div>
-            </div>
-            <div className="query-sheet-body">
-              <AskQuestion
-                hasMemories={memoryCount > 0}
-                onResult={handleQueryResult}
-                prefillQuestion={prefillQuestion}
-                autoSubmitNonce={autoSubmitNonce}
-              />
-              <AIResponse
-                result={queryResult}
-                question={activeQuery}
-                onClear={handleClearResult}
-              />
-              {queryHistory.length > 0 && (
-                <section className="question-history" aria-labelledby="history-heading">
-                  <h3 id="history-heading">Recent questions</h3>
-                  <ul className="history-list">
-                    {queryHistory.map(({ id, question }) => (
-                      <li key={id}>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setPrefillQuestion(question)
-                            setAutoSubmitNonce((previous) => previous + 1)
-                          }}
-                          title="Ask again"
-                        >
-                          <span>{question}</span>
-                          <ArrowUpRight size={16} aria-hidden="true" />
-                        </button>
-                      </li>
-                    ))}
-                  </ul>
-                </section>
-              )}
-            </div>
-          </section>
+          <AskQuestion
+            availableMemoryIds={memoryIds}
+            loadingMemories={loadingMem}
+            history={queryHistory}
+            historyError={historyError}
+            onRefreshHistory={refreshHistory}
+            onOpenMemory={handleOpenMemory}
+          />
 
           <div className="workspace-column">
             <section id="memory-list-section" className="workspace-sheet library-section" aria-labelledby="memories-heading">
@@ -230,6 +172,7 @@ export default function DashboardPage() {
                   memories={memories}
                   onDelete={handleMemoryDeleted}
                   onUpdate={handleMemoryUpdated}
+                  revealMemory={revealMemory}
                 />
               )}
             </section>
