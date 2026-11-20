@@ -9,7 +9,7 @@ const LLM_MODELS = (process.env.OPENROUTER_MODELS ?? "openrouter/free")
 import { NextRequest, NextResponse } from "next/server";
 import { planChatMessage } from "@/lib/chat-intent-router";
 import { handleChatMemory } from "@/lib/chat-memory";
-import { splitChatSentences } from "@/lib/chat-memory-intent";
+import { isDirectMemoryEditRequest, splitChatSentences } from "@/lib/chat-memory-intent";
 import { createClient } from "@/lib/supabase/server";
 import { generateEmbedding } from "@/lib/embeddings";
 import { openai } from "@/lib/openai";
@@ -21,6 +21,11 @@ const MATCH_THRESHOLD = 0.45; // minimum cosine similarity to include a note
 const MATCH_COUNT = 5; // max notes to retrieve as context
 const MAX_CONTEXT_CHARS = 8000; // guard against enormous prompts
 const MEMORY_ID = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i;
+const CONVERSATION_REPLIES = {
+  greeting: "Hi! What would you like to ask or remember?",
+  thanks: "You’re welcome.",
+  other: "What would you like me to find or remember?",
+};
 
 function parseReference(value: unknown): ChatReference | undefined {
   if (!value || typeof value !== "object" || !("question" in value)
@@ -179,10 +184,16 @@ export async function POST(request: NextRequest) {
     const memoryOutcome = await handleChatMemory(
       supabase, userId, question, memoryMode, reference, plan,
     ).catch(() => null);
+    const editRequested = !!(plan?.updateRequested || isDirectMemoryEditRequest(question));
+    const actionReply = memoryOutcome?.reply ?? (editRequested
+      ? memoryMode === "read-only"
+        ? "Send the update from the chat composer to change a memory."
+        : "Tell me which memory to update and what new value to use."
+      : undefined);
 
     async function respond(result: QueryResult, saveHistory = true) {
-      if (memoryOutcome?.reply && memoryOutcome.reply !== result.answer) {
-        result.answer = memoryOutcome.reply + "\n\n" + result.answer;
+      if (actionReply && actionReply !== result.answer) {
+        result.answer = actionReply + "\n\n" + result.answer;
       }
       if (memoryOutcome?.changes?.length) {
         result.meta = { ...result.meta, memoryChanges: memoryOutcome.changes };
@@ -206,20 +217,20 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ data: result });
     }
 
-    const hasChanges = !!memoryOutcome?.changes?.length;
-    const asksAfterCapture = question.endsWith("?")
-      && memoryOutcome?.changes?.some((change) => change.action === "saved")
-      && !/^(?:please\s+)?(?:(?:can|could|would)\s+you\s+)?(?:remember|save|add)\b/i.test(question);
-    const shouldSearch = plan?.needsMemory ?? (!memoryOutcome?.reply || asksAfterCapture);
+    const lastSentence = splitChatSentences(question).at(-1)?.trim();
+    const separateQuestion = lastSentence && lastSentence !== question && lastSentence.endsWith("?")
+      && !isDirectMemoryEditRequest(lastSentence) ? lastSentence : undefined;
+    const searchQuestion = actionReply ? plan?.searchText ?? separateQuestion ?? question : question;
+    const needsLookup = plan?.needsMemory ?? (!actionReply || !!separateQuestion);
+    // A write turn can also ask a question, but its command is not a lookup.
+    const shouldSearch = needsLookup && (!actionReply
+      || (searchQuestion !== question && !isDirectMemoryEditRequest(searchQuestion)));
     if (!shouldSearch) {
-      const answer = memoryOutcome?.reply ?? plan?.reply ?? "What would you like to ask or remember?";
+      const answer = actionReply ?? CONVERSATION_REPLIES[plan?.conversation ?? "other"];
       return respond({ answer, sources: [] });
     }
 
     const partialReply = "I couldn’t search your notes for your question. Please try asking it again.";
-    const searchQuestion = hasChanges && question.endsWith("?")
-      ? splitChatSentences(question).at(-1) ?? question
-      : question;
 
     // ── 3. Generate embedding for the question ───────────────────────────────
     let queryEmbedding: number[];
@@ -227,7 +238,7 @@ export async function POST(request: NextRequest) {
       queryEmbedding = await generateEmbedding(searchQuestion);
     } catch (err) {
       console.error("[query] embedding generation failed:", err);
-      if (memoryOutcome?.reply) return respond({ answer: partialReply, sources: [] });
+      if (actionReply) return respond({ answer: partialReply, sources: [] });
       return NextResponse.json(
         { error: "Failed to process your question. Please try again." },
         { status: 502 },
@@ -246,7 +257,7 @@ export async function POST(request: NextRequest) {
 
     if (rpcError) {
       console.error("[query] vector search failed:", rpcError);
-      if (memoryOutcome?.reply) return respond({ answer: partialReply, sources: [] });
+      if (actionReply) return respond({ answer: partialReply, sources: [] });
       return NextResponse.json(
         { error: "Vector search failed. Please try again." },
         { status: 500 },
@@ -262,7 +273,7 @@ export async function POST(request: NextRequest) {
           "I couldn't find any notes relevant to your question. Try adding more memories or rephrasing your question.",
         sources: [],
       };
-      return respond(result, !!memoryOutcome?.reply);
+      return respond(result, !!actionReply);
     }
 
     // ── 6. Build context blocks (truncate if needed) ─────────────────────────

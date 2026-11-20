@@ -3,6 +3,8 @@ import type { ChatMessagePlan } from "@/lib/chat-intent-router";
 import {
   findEmailAddresses,
   getDirectChatMemoryIntent,
+  hasEmailTopic,
+  isDirectMemoryEditRequest,
   isEmailSubject,
   literalEmailReplacement,
   referencedEmailReplacementSubject,
@@ -208,7 +210,7 @@ async function editFromChat(
   const exactMatches = candidates.filter(({ memory }) =>
     subjectName(memory.title ?? "") === subjectName(intent.subject));
   const referenced = candidates.filter(({ memory }) => referenceIds.includes(memory.id));
-  const referredEmail = email && /\be-?mail\b/i.test(reference?.question ?? "") && referenced.length > 0;
+  const referredEmail = email && hasEmailTopic(reference?.question ?? "") && referenced.length > 0;
   const likely = referredEmail ? referenced : exactMatches.length ? exactMatches : referenced.length ? referenced : candidates;
 
   if (likely.length !== 1 || (incomplete && !exactMatches.length && !referenced.length)) {
@@ -227,6 +229,9 @@ async function editFromChat(
   const updated = await updateMemory(client, userId, memory.id, draft, memory);
   if (!updated) {
     return { reply: "That memory changed while I was updating it. Open it to check the latest text, then try again." };
+  }
+  if (updated.id !== memory.id || updated.title !== draft.title || updated.content !== draft.content) {
+    return { reply: "I couldn’t verify the saved change. Open the memory to check its current value." };
   }
   return { ...changed("updated", [updated]), reply: "I updated your memory." };
 }
@@ -297,7 +302,8 @@ export async function handleChatMemory(
   const referencedEmail = referencedEmailReplacementSubject(message);
   const update = direct.kind === "update" ? direct
     : plan?.update ? { kind: "update" as const, ...plan.update } : undefined;
-  const editRequested = !!(update || referencedEmail || direct.kind === "clarify" || plan?.updateRequested);
+  const editRequested = !!(update || referencedEmail || direct.kind === "clarify"
+    || plan?.updateRequested || isDirectMemoryEditRequest(message));
 
   let edit: ChatMemoryOutcome = {};
   try {
@@ -314,7 +320,8 @@ export async function handleChatMemory(
 
   const facts = new Map<string, Fact>();
   const proposedFacts = [...(direct.kind === "save" ? direct.facts : []), ...(plan?.facts ?? [])];
-  const unresolvedEmailEdit = !update && editRequested && /\be-?mail\b/i.test(message);
+  const unresolvedEmailEdit = !update && editRequested
+    && (hasEmailTopic(message) || findEmailAddresses(message).length > 0);
   for (const fact of proposedFacts) {
     const content = normalize(fact.content);
     // The edit already accounts for its replacement value. A rejected email
@@ -364,8 +371,9 @@ async function rememberFacts(
         content: fact.content,
         tags: [],
       }, { id: factId(userId, fact.content) });
-      if (memory) saved.push(memory);
-      else hasExisting = true;
+      if (!memory) hasExisting = true;
+      else if (memory.title === fact.title && memory.content === fact.content) saved.push(memory);
+      else failed = true;
     } catch {
       failed = true;
     }

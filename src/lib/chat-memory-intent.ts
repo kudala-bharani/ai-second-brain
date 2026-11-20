@@ -13,12 +13,13 @@ const CLARIFY_UPDATE: ChatMemoryIntent = {
 };
 
 const EMAIL = /[a-z\d.!#$%&'*+/=?^_{|}~-]+@[a-z\d](?:[a-z\d-]*[a-z\d])?(?:\.[a-z\d](?:[a-z\d-]*[a-z\d])?)+/gi;
-const EMAIL_TOPIC = /\be-?mail(?:\s+(?:address|id))?\b/i;
-const EMAIL_SUBJECT = /^(?:(?:my|the)\s+)?(?:(?:personal|work|school|primary|secondary|new|old)\s+)?e-?mail(?:\s+(?:address|id))?(?:\s+(?:note|memory)|\s+in\s+(?:my|the)\s+(?:saved\s+)?(?:note|notes|memory|notebook))?$/i;
+const EMAIL_TOPIC = /\be[ -]?mail\b/i;
+const LABELLED_EMAIL_TYPO = /\b(?:new|updated|current|correct|personal|work|school|primary|secondary)\s+(?:(?:personal|work|school|primary|secondary)\s+)?emil\b|\bemil\s+(?:address|id)\b/i;
+const EMAIL_SUBJECT = /^(?:(?:my|the)\s+)?(?:(?:new|old|updated|current|correct)\s+)?(?:(?:personal|work|school|primary|secondary)\s+)?(?:e[ -]?mail|emil)(?:\s+(?:address|id))?(?:\s+(?:note|memory)|\s+in\s+(?:my|the)\s+(?:saved\s+)?(?:note|notes|memory|notebook))?$/i;
 const CHAT_PREAMBLE = /^(?:(?:ok(?:ay)?|hi|hey|yes|yeah|sure|actually|now)\b\s*(?:[,.!:]\s*|\s+))+/i;
-const EDIT_START = /^(?:please\s+)?(?:(?:can|could|would|will)\s+you\s+|i\s+want\s+you\s+to\s+)?(?:please\s+)?(change|update|replace|set|edit|correct|revise|modify)\s+/i;
+const EDIT_START = /^(?:please\s+)?(?:(?:can|could|would|will)\s+(?:you|u)\s+|i\s+want\s+(?:you|u)\s+to\s+)?(?:please\s+)?(change|update|replace|set|edit|correct|revise|modify)\s+/i;
 const EDIT_END = /(?:\s*[,;]\s*|\s+)(?:and\s+)?(?:please\s+)?(?:update|change|edit|correct)(?:\s+(?:it|this|that)(?:\s+(?:in|as|is)\s+(?:(?:my|the|your)\s+)?(?:memory|memroy|notes?|notebook))?|\s+(?:my|the|this|that)\s+(?:memory|memroy|notes?))(?:\s+in\s+(?:my|the)\s+notebook)?[.!?]*$/i;
-const EMAIL_DECLARATION = /^(?:(?:this|here)\s+is\s+|here['’]s\s+)?((?:(?:my|the|this|that)\s+)?(?:(?:new|updated|current|correct)\s+)?(?:(?:personal|work|school|primary|secondary)\s+)?e-?mail(?:\s+(?:address|id))?)(?:\s+is\s+|\s*[:=]\s*|\s+)([\s\S]+)$/i;
+const EMAIL_DECLARATION = /^(?:(?:this|here)\s+is\s+|here['’]s\s+)?((?:(?:my|the|this|that)\s+)?(?:(?:new|updated|current|correct)\s+)?(?:(?:personal|work|school|primary|secondary)\s+)?(?:e[ -]?mail|emil)(?:\s+(?:address|id))?)(?:\s+is\s+|\s*[:=]\s*|\s+)([\s\S]+)$/i;
 const EDIT_WRAPPER = /^(?:(?:my|the|this|that)\s+)?(?:memory|memroy|note|notebook)\s+to\s+/i;
 const UNNAMED_MEMORY = /^(?:(?:my|the|this|that)\s+)?(?:memory|memroy|note|notebook)$/i;
 const REPLACEMENT = /^([\s\S]+?)\s+(?:to|with|as)\s+([\s\S]+)$/i;
@@ -28,6 +29,7 @@ const NOT_A_FACT = /\b(?:what if|hypothetically|for example|as an example|suppos
 const SECRET = /\b(?:passwords?|passcodes?|passphrases?|api\s*(?:keys?|tokens?|secrets?)|access\s*tokens?|secret\s*keys?|private\s*keys?|verification\s*codes?|one[- ]time\s*(?:passwords?|codes?)|recovery\s*(?:code|phrase|key)s?|(?:my|your|account)\s+pin|social\s+security|ssn|(?:credit|debit)\s+card)\b|(?:\b(?:gh[pousr]_|github_pat_|sk-(?:proj-|or-v1-)?|AKIA|hf_|xox[baprs]-)[a-z0-9_-]{12,})|-----BEGIN [A-Z ]*PRIVATE KEY-----/i;
 const QUOTED_OR_PASTED = /^(?:["“‘'\x60]|>\s*|(?:user|assistant|system|example|sample|quote|transcript)\s*:)/i;
 const QUESTION_START = /^(?:hi[,.]?\s+)?(?:what|where|when|why|who|how|do|does|did|is|are|am|can|could|would|will|should|have|has|was|were)\s+/i;
+const EDIT_ADVICE = /\b(?:how|instructions?|explain|tutorial|is it possible|(?:can|could|would|should|do|will)\s+(?:i|we))\b/i;
 const PRONOUN_SUBJECT = /^(?:that|it|this|the memory|the note|this memory|that memory|this note|that note)$/i;
 
 export function findEmailAddresses(text: string): string[] {
@@ -35,12 +37,17 @@ export function findEmailAddresses(text: string): string[] {
   return [...new Map(addresses.map((address) => [address.toLowerCase(), address])).values()];
 }
 
+export function hasEmailTopic(text: string): boolean {
+  const words = text.replace(EMAIL, " ");
+  return EMAIL_TOPIC.test(words) || LABELLED_EMAIL_TYPO.test(words);
+}
+
 export function isEmailSubject(subject: string): boolean {
-  return EMAIL_SUBJECT.test(subject.trim());
+  return hasEmailTopic(subject) && EMAIL_SUBJECT.test(subject.trim());
 }
 
 function emailSubject(text: string): string {
-  const qualifier = text.match(/\b(personal|work|school|primary|secondary)\s+e-?mail\b/i)?.[1];
+  const qualifier = text.match(/\b(personal|work|school|primary|secondary)\s+(?:e[ -]?mail|emil)\b/i)?.[1];
   return qualifier ? qualifier.charAt(0).toUpperCase() + qualifier.slice(1).toLowerCase() + " email" : "Email address";
 }
 
@@ -73,6 +80,9 @@ function getExplicitEdit(message: string) {
 
   // A trailing instruction can qualify a statement such as "My email is x, update the memory."
   const statement = current.slice(prefix?.[0].length ?? 0, suffix?.index ?? current.length);
+  if (!prefix && EDIT_ADVICE.test(splitChatSentences(statement).at(-1) ?? "")) {
+    return null;
+  }
   const wrapper = prefix && statement.match(EDIT_WRAPPER);
   if (wrapper) {
     const wrapped = statement.slice(wrapper[0].length);
@@ -80,6 +90,11 @@ function getExplicitEdit(message: string) {
     if (command) return { verb: command[1].toLowerCase(), statement: wrapped.slice(command[0].length) };
   }
   return { verb: prefix?.[1].toLowerCase(), statement };
+}
+
+export function isDirectMemoryEditRequest(message: string): boolean {
+  const current = message.trim();
+  return canWriteFromMessage(current) && getExplicitEdit(current) !== null;
 }
 
 export function referencedEmailReplacementSubject(message: string): string | null {
@@ -93,7 +108,7 @@ export function referencedEmailReplacementSubject(message: string): string | nul
   const reference = trimValue(replacement[2]);
   const subject = isEmailSubject(target)
     ? target
-    : UNNAMED_MEMORY.test(target) && EMAIL_TOPIC.test(reference) ? reference : null;
+    : UNNAMED_MEMORY.test(target) && hasEmailTopic(reference) ? reference : null;
   if (!subject) return null;
   if (!/^(?:(?:this|that|the)\s+(?:new\s+)?(?:one|e-?mail(?:\s+(?:address|id))?|address)|the\s+(?:one|e-?mail(?:\s+(?:address|id))?|address)\s+i\s+(?:just\s+)?(?:gave|sent|mentioned)(?:\s+you)?)$/i
     .test(reference)) return null;
@@ -105,10 +120,15 @@ function literalEmail(value: string): string | undefined {
   return findEmailAddresses(text).find((address) => address === text);
 }
 
+function emailDeclaration(text: string): RegExpMatchArray | null {
+  const match = text.match(EMAIL_DECLARATION);
+  return match && hasEmailTopic(match[1]) ? match : null;
+}
+
 function checkDirectUpdate(edit: ReturnType<typeof getExplicitEdit>, previousQuestion: string | undefined): ChatMemoryIntent | null {
   if (!edit) return null;
   const { verb, statement } = edit;
-  const declaration = !verb && statement.match(EMAIL_DECLARATION);
+  const declaration = !verb && emailDeclaration(statement);
   if (declaration) {
     const value = literalEmail(declaration[2]);
     return value
@@ -132,9 +152,9 @@ function checkDirectUpdate(edit: ReturnType<typeof getExplicitEdit>, previousQue
   }
   const replacement = statement.match(REPLACEMENT);
   const subjectText = trimSubject(replacement?.[1] ?? "");
-  const isPriorEmail = !!previousQuestion && EMAIL_TOPIC.test(previousQuestion);
-  const wrappedEmail = replacement && UNNAMED_MEMORY.test(subjectText)
-    ? replacement[2].match(EMAIL_DECLARATION)
+  const isPriorEmail = !!previousQuestion && hasEmailTopic(previousQuestion);
+  const wrappedEmail = replacement && (UNNAMED_MEMORY.test(subjectText) || PRONOUN_SUBJECT.test(subjectText))
+    ? emailDeclaration(replacement[2])
     : null;
   if (wrappedEmail) {
     const value = literalEmail(wrappedEmail[2]);
