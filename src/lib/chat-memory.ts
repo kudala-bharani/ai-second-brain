@@ -22,7 +22,7 @@ import {
   updateMemory,
   type MemoryClient,
 } from "@/lib/memory-store";
-import type { ChatMemoryChange, ChatMemoryMode, ChatReference, Memory, QueryResult } from "@/types";
+import type { ChatMemoryChange, ChatMemoryMode, ChatReference, Memory, MemoryMatch, QueryMeta, QueryResult } from "@/types";
 
 type UpdateIntent = Extract<ChatMemoryIntent, { kind: "update" }> & { allowCreate?: boolean };
 type Fact = Extract<ChatMemoryIntent, { kind: "save" }>["facts"][number];
@@ -32,6 +32,8 @@ export type ChatMemoryOutcome = {
   reply?: string;
   changes?: ChatMemoryChange[];
   memories?: Memory[];
+  sources?: MemoryMatch[];
+  pendingContactUpdate?: QueryMeta["pendingContactUpdate"];
 };
 
 const MAX_CANDIDATES = 100;
@@ -432,7 +434,10 @@ async function editFromChat(
     return { reply: "I couldn’t find a memory I can update safely. Include the note’s exact title or the text you want to replace." };
   }
 
-  const { memory, draft } = likely[0];
+  return commitEdit(client, userId, likely[0]);
+}
+
+async function commitEdit(client: MemoryClient, userId: string, { memory, draft }: EditCandidate): Promise<ChatMemoryOutcome> {
   if (draft.title === memory.title && draft.content === memory.content) {
     return { reply: "That memory already has this value.", memories: [memory] };
   }
@@ -444,6 +449,97 @@ async function editFromChat(
     return { reply: "I couldn’t verify the saved change. Open the memory to check its current value." };
   }
   return { ...changed("updated", [updated]), reply: "I updated your memory." };
+}
+
+async function requestContactValue(
+  client: MemoryClient,
+  userId: string,
+  subject: string,
+  reference?: ChatReference,
+): Promise<ChatMemoryOutcome> {
+  const phone = isPhoneSubject(subject);
+  const relatedPriorAnswer = phone && reference && getPhoneRecallSubject(reference.question) === subject;
+  const { notes, incomplete } = await findCandidates(client, userId, subject, "", relatedPriorAnswer ? reference.sourceIds : []);
+  const fields = (note: Memory) => phone ? phoneFields(note, subject) : emailFields(note, subject);
+  const labeled = notes.filter((note) => fields(note).length > 0);
+  const verified = !labeled.length && relatedPriorAnswer
+    ? await verifyPhoneReferences(client, userId, notes, reference, subject) : undefined;
+  const matches = verified ? notes.filter((note) => verified.has(note.id)) : labeled;
+  const note = matches[0];
+  const barePhone = note && verified?.get(note.id)?.bareNumber;
+  const values = note ? fields(note) : [];
+  const currentValue = barePhone ?? values[0];
+  const canEdit = currentValue && note && buildEdit(note, { kind: "update", subject, value: currentValue }, barePhone);
+  if (!canEdit || matches.length !== 1 || values.length > 1 || (incomplete && !verified)) {
+    return { reply: "Tell me which saved value to replace and include the new value in the same message." };
+  }
+
+  return {
+    reply: `What is the new ${subject.toLowerCase()}? Reply with just the new value to update this note.`,
+    sources: [{ ...note, similarity: 1, evidence_snippet: currentValue }],
+    pendingContactUpdate: { subject, memoryId: note.id, ...(barePhone ? { barePhone } : {}) },
+  };
+}
+
+export function parseContactValueReply(message: string, pending = false): { phone?: string; email?: string } | null {
+  if (message.trimEnd().endsWith("?")) return null;
+  const phone = parsePhoneNumber(message);
+  if (phone) return { phone };
+  const text = message.trim().replace(/[.!]+$/, "").trim().replace(/^["“‘']|["”’']$/g, "");
+  if (findEmailAddresses(text).includes(text)) return { email: text };
+  // Keep an active clarification open for a phone-shaped but incomplete reply.
+  return pending && /\d/.test(text) && /^[\d\s()+.,\-\u2010-\u2013]+$/.test(text) ? {} : null;
+}
+
+export async function resumeContactCorrection(
+  client: MemoryClient,
+  userId: string,
+  reference: ChatReference | undefined,
+  reply: NonNullable<ReturnType<typeof parseContactValueReply>>,
+): Promise<ChatMemoryOutcome> {
+  const standalone = { reply: "Tell me what this value is for and whether to remember it or replace an existing value." };
+  if (!reference?.historyId) return standalone;
+
+  try {
+    const { data: previous, error } = await client.from("query_history")
+      .select("sources, meta, settings")
+      .eq("id", reference.historyId).eq("user_id", userId).eq("question", reference.question).maybeSingle();
+    const pending = previous?.meta?.pendingContactUpdate as QueryMeta["pendingContactUpdate"];
+    if (error || !previous || !pending || typeof pending.subject !== "string" || typeof pending.memoryId !== "string"
+      || !["auto", "manual"].includes(previous.settings?.memoryMode) || !Array.isArray(previous.sources)) return standalone;
+
+    const phone = isPhoneSubject(pending.subject);
+    const email = isEmailSubject(pending.subject);
+    if (!phone && !email) return standalone;
+    const note = previous.sources.find((source: Partial<Memory> | null) => source?.id === pending.memoryId
+      && source.user_id === userId && typeof source.content === "string"
+      && (source.title === null || typeof source.title === "string")) as MemoryMatch | undefined;
+    if (!note) return standalone;
+    const value = phone ? reply.phone : reply.email;
+    const prompt = `Reply with just the new ${pending.subject.toLowerCase()} to update this note.`;
+    if (!value) return { reply: prompt, sources: [note], pendingContactUpdate: pending };
+
+    const barePhone = phone && !note.title && parsePhoneNumber(note.content) === pending.barePhone ? pending.barePhone : undefined;
+    const edit = buildEdit(note, { kind: "update", subject: pending.subject, value }, barePhone);
+    if (!edit) return { reply: "I couldn’t verify the saved value. Ask for it again before updating it." };
+    const { data: current, error: currentError } = await client.from("memories").select(MEMORY_COLUMNS)
+      .eq("user_id", userId).eq("id", note.id).maybeSingle();
+    if (currentError) throw currentError;
+    if (!current || current.user_id !== userId) return { reply: "I couldn’t find the note for that update." };
+    if (current.title === edit.draft.title && current.content === edit.draft.content) {
+      return { reply: "That memory already has this value.", memories: [current] };
+    }
+    if (current.title !== note.title || current.content !== note.content) {
+      return { reply: "That note changed after I asked. Check the latest saved value before sending the correction again." };
+    }
+    try {
+      return await commitEdit(client, userId, edit);
+    } catch {
+      return { reply: `I couldn’t save the change. ${prompt}`, sources: [note], pendingContactUpdate: pending };
+    }
+  } catch {
+    return { reply: "I couldn’t reopen that update. Send the full correction in one message." };
+  }
 }
 
 async function editReferencedEmail(
@@ -526,6 +622,9 @@ export async function handleChatMemory(
       edit = await editReferencedEmail(client, userId, message, referencedEmail, reference);
     } else if (update) {
       edit = await editFromChat(client, userId, message, update, reference);
+    } else if (direct.kind === "clarify" && "explicit" in direct && direct.explicit === true
+      && "subject" in direct && typeof direct.subject === "string") {
+      edit = await requestContactValue(client, userId, direct.subject, reference);
     } else if (editRequested) {
       edit = { reply: direct.kind === "clarify" ? direct.message : "Tell me which memory to update and what new value to use." };
     }
@@ -555,6 +654,7 @@ export async function handleChatMemory(
   if (!facts.size) return edit;
   const capture = await rememberFacts(client, userId, Array.from(facts.values()).slice(0, 3));
   return {
+    ...edit,
     reply: [edit.reply, capture.reply].filter(Boolean).join("\n\n") || undefined,
     changes: [...(edit.changes ?? []), ...(capture.changes ?? [])],
     memories: [...(edit.memories ?? []), ...(capture.memories ?? [])],

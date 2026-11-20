@@ -10,7 +10,7 @@ type ContactTarget = { contact: "email" | "phone"; subject: string };
 export type ContactChatIntent = (
   | (Extract<ChatMemoryIntent, { kind: "update" }> & { allowCreate?: boolean })
   | Extract<ChatMemoryIntent, { kind: "clarify" }>
-) & { contact: ContactTarget["contact"]; explicit: boolean };
+) & ContactTarget & { explicit: boolean };
 
 const NO_INTENT: ChatMemoryIntent = { kind: "none" };
 const CLARIFY_UPDATE: ChatMemoryIntent = {
@@ -93,6 +93,11 @@ const QUOTED_OR_PASTED = /^(?:["“‘'\x60]|>\s*|(?:user|assistant|system|examp
 const QUESTION_START = /^(?:hi[,.]?\s+)?(?:what|where|when|why|who|how|do|does|did|is|are|am|can|could|would|will|should|have|has|was|were)\s+/i;
 const EDIT_ADVICE = /\b(?:how|instructions?|explain|tutorial|is it possible|(?:can|could|would|should|do|will)\s+(?:i|we))\b/i;
 const PRONOUN_SUBJECT = /^(?:that|it|this|the memory|the note|this memory|that memory|this note|that note)$/i;
+const PREVIOUS_CONTACT_REFERENCE = /^(?:(?:my|the|this|that)\s+)?(?:old|previous)\s+one$/i;
+const INACTIVE_CONTACT_PREFIX = /^(?:(?:and|but)\s+)?(?:i\s+)?(?:no longer (?:have|use)|(?:do not|don['’]t) (?:have|use)|stopped using|lost|can(?:not|['’]t) use)\s+(.+?)(?:\s+(?:anymore|any longer))?$/i;
+const INACTIVE_CONTACT_SUFFIX = /^(.+?)\s+(?:(?:is|was|has been)\s+(?:inactive|disconnected|gone|no longer (?:active|valid|in use))|(?:does not|doesn['’]t)\s+work(?:\s+anymore)?|stopped working)$/i;
+const CONTACT_CLAUSE_BREAK = /[,;\r\n]+|(?<=[.!])\s+|\s+(?=so\s+(?:(?:can|could|would|will)\s+you\s+)?(?:please\s+)?(?:replace|update|change|set|use)\b)/i;
+const CONTACT_REPLACEMENT_SUFFIX = /(?:[,;]?\s+(?:please|for me|going forward|from now on|in (?:my|the) (?:notes?|notebook|memory)))[.!?]*$/i;
 
 export function findEmailAddresses(text: string): string[] {
   const addresses = text.match(EMAIL) ?? [];
@@ -249,10 +254,10 @@ function contactTarget(field: string, priorPhone?: string, allowBare = false): C
   return undefined;
 }
 
-function contactClarification(contact: ContactTarget["contact"], explicit: boolean): ContactChatIntent {
+function contactClarification(target: ContactTarget, explicit: boolean): ContactChatIntent {
   return {
-    ...(contact === "email" ? CLARIFY_EMAIL_REPLACEMENT : CLARIFY_PHONE_REPLACEMENT),
-    contact,
+    ...(target.contact === "email" ? CLARIFY_EMAIL_REPLACEMENT : CLARIFY_PHONE_REPLACEMENT),
+    ...target,
     explicit,
   };
 }
@@ -271,10 +276,10 @@ function contactUpdate(
   options: { previous?: string; allowCreate?: boolean } = {},
 ): ContactChatIntent {
   const parse = target.contact === "email" ? literalEmail : parsePhoneNumber;
-  const value = parse(replacement.replace(CURRENT_VALUE, ""));
+  const value = parse(replacement.replace(CURRENT_VALUE, "").replace(CONTACT_REPLACEMENT_SUFFIX, ""));
   const previousValue = options.previous === undefined ? undefined : parse(options.previous);
   if (!value || (options.previous !== undefined && !previousValue)) {
-    return contactClarification(target.contact, explicit);
+    return contactClarification(target, explicit);
   }
   return {
     kind: "update",
@@ -286,7 +291,45 @@ function contactUpdate(
   };
 }
 
+function referencedContact(text: string, target: ContactTarget): ContactTarget | undefined {
+  const field = trimSubject(text);
+  if (PRONOUN_SUBJECT.test(field) || PREVIOUS_CONTACT_REFERENCE.test(field)) return target;
+  const named = contactTarget(field, target.contact === "phone" ? target.subject : undefined)
+    ?? (target.contact === "phone" ? contactTarget(field.replace(/\b(?:old|previous)\s+/i, ""), target.subject) : undefined);
+  const subject = named && mergeContactSubjects(target, named);
+  return subject ? { ...target, subject } : undefined;
+}
+
+function explicitContactContinuation(tail: string, target: ContactTarget): ContactChatIntent | null | undefined {
+  const clauses = tail.trim().replace(/^[,;:.!—–-]\s*/, "").replace(CONTACT_REPLACEMENT_SUFFIX, "").split(CONTACT_CLAUSE_BREAK)
+    .map((clause) => clause.trim().replace(/[.!]+$/, "").trim()).filter(Boolean);
+  const instruction = clauses.pop()?.replace(/^(?:so|and(?:\s+then)?|then)\s+/i, "");
+  if (!instruction) return undefined;
+  const edit = getExplicitEdit(instruction);
+  const replacement = edit?.verb && edit.statement.match(REPLACEMENT);
+  const useInstead = instruction.match(/^(?:please\s+)?use\s+(.+?)(?:\s+instead)?[.!?]*$/i);
+  if (!replacement && !useInstead) return undefined;
+
+  for (const clause of clauses) {
+    const inactive = clause.match(INACTIVE_CONTACT_PREFIX)?.[1] ?? clause.match(INACTIVE_CONTACT_SUFFIX)?.[1];
+    const previous = inactive && referencedContact(inactive, target);
+    if (!previous) return null;
+    target = previous;
+  }
+
+  const updated = replacement ? referencedContact(replacement[1], target) : target;
+  if (!updated) return null;
+  return contactUpdate(updated, replacement?.[2] ?? useInstead?.[1] ?? "", true);
+}
+
 function declaredContact(message: string, priorPhone?: string, remember = false): ContactChatIntent | null {
+  const change = message.match(CONTACT_CHANGE);
+  const changedField = change && (change[1] ?? change[2] ?? change[3]);
+  const namedChange = changedField ? contactTarget(changedField, priorPhone) : undefined;
+  if (change && namedChange) {
+    const continuation = explicitContactContinuation(change[4], namedChange);
+    if (continuation !== undefined) return continuation;
+  }
   if (message.endsWith("?") || splitChatSentences(message).slice(1).some((sentence) => QUESTION_START.test(sentence.trim()))) {
     return null;
   }
@@ -300,17 +343,14 @@ function declaredContact(message: string, priorPhone?: string, remember = false)
     const subject = mentioned && mergeContactSubjects(target, mentioned);
     return subject
       ? contactUpdate({ ...target, subject }, declaration[2], true, { previous: contrasted[2] })
-      : contactClarification(target.contact, true);
+      : contactClarification(target, true);
   }
 
-  const change = message.match(CONTACT_CHANGE);
-  if (change) {
-    const field = change[1] ?? change[2] ?? change[3];
+  if (change && changedField) {
     const tail = change[4].trim();
-    const named = contactTarget(field, priorPhone);
     // A bare number must have phone context or be paired with a current, owned number.
     const joined = /^(?:[,;:.!—–-]|(?:and|so)\b)/i.test(tail);
-    const target = named ?? (joined ? contactTarget(field, undefined, true) : undefined);
+    const target = namedChange ?? (joined ? contactTarget(changedField, undefined, true) : undefined);
     if (!target) return null;
     const transition = tail.match(/^from\s+(.+?)\s+to\s+(.+)$/i);
     if (transition) return contactUpdate(target, transition[2], true, { previous: transition[1] });
@@ -323,11 +363,11 @@ function declaredContact(message: string, priorPhone?: string, remember = false)
       const subject = mentioned && mergeContactSubjects(target, mentioned);
       return subject
         ? contactUpdate({ ...target, subject }, declaration[2], true)
-        : contactClarification(target.contact, true);
+        : contactClarification(target, true);
     }
 
     const replacement = rest.match(/^(?:to|now|it(?:['’]s|\s+is))\s+(.+)$/i)?.[1];
-    return named ? contactUpdate(target, replacement ?? rest, true) : null;
+    return namedChange ? contactUpdate(target, replacement ?? rest, true) : null;
   }
 
   const declaration = message.match(CONTACT_DECLARATION);
@@ -482,6 +522,7 @@ export function getStandaloneContactIntent(
   if (!canWriteFromMessage(current)) return null;
   const context = previousQuestion && canWriteFromMessage(previousQuestion) ? previousQuestion.slice(0, 500) : undefined;
   const priorPhone = context && getPhoneRecallSubject(context);
+  const priorEmail = context && getEmailRecallSubject(context);
 
   const command = getExplicitEdit(current);
   if (command) {
@@ -495,9 +536,19 @@ export function getStandaloneContactIntent(
       const target = contactTarget(intent.subject);
       if (target) return { ...intent, ...target, explicit: true };
     }
-    if (intent === CLARIFY_PHONE_REPLACEMENT) return contactClarification("phone", true);
-    if (intent === CLARIFY_UPDATE && (hasEmailTopic(command.statement) || (context && getEmailRecallSubject(context)))) {
-      return contactClarification("email", true);
+    if (intent?.kind === "clarify") {
+      const field = trimSubject(command.statement.match(REPLACEMENT)?.[1] ?? command.statement.replace(/\?$/, ""));
+      const priorContact = priorPhone ? { contact: "phone" as const, subject: priorPhone }
+        : priorEmail ? { contact: "email" as const, subject: priorEmail } : undefined;
+      const contextualTarget = priorContact && referencedContact(field, priorContact);
+      if (contextualTarget && command.statement.match(REPLACEMENT)) {
+        const continuation = explicitContactContinuation(current, contextualTarget);
+        if (continuation) return continuation;
+      }
+      const target = contactTarget(field, priorPhone)
+        ?? (intent === CLARIFY_PHONE_REPLACEMENT ? { contact: "phone" as const, subject: priorPhone || "Phone number" } : undefined)
+        ?? contextualTarget;
+      if (target) return contactClarification(target, true);
     }
     return null;
   }
