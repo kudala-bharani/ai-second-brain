@@ -54,6 +54,7 @@ function getPreviousReference(turns: ChatTurn[], availableMemoryIds: ReadonlySet
     return {
       question: turn.request.question,
       sourceIds: Array.from(ids).filter((id) => availableMemoryIds.has(id)).slice(0, MAX_REFERENCE_SOURCES),
+      ...(index === turns.length - 1 && turn.result.historyId ? { historyId: turn.result.historyId } : {}),
     }
   }
 }

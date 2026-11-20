@@ -22,6 +22,7 @@ export type ChatMemoryMode = 'auto' | 'manual' | 'read-only'
 export interface ChatReference {
   question: string
   sourceIds: string[]
+  historyId?: string
 }
 
 export interface ChatMemoryChange {
@@ -35,6 +36,7 @@ export interface QueryResult {
   sources: MemoryMatch[]
   meta?: QueryMeta
   changedMemories?: Memory[]
+  historyId?: string
 }
 
 export interface QueryMeta {
@@ -44,6 +46,7 @@ export interface QueryMeta {
   maxSources?: number
   durationMs?: number
   memoryChanges?: ChatMemoryChange[]
+  pendingContactUpdate?: { subject: string; memoryId: string; barePhone?: string }
 }
 
 export interface QueryControls {

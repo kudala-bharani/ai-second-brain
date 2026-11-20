@@ -10,10 +10,13 @@ const otherOwner = 'd292d56b-39d5-4b4c-8a78-2a61bc69c31b';
 const phoneId = 'ab1de413-0061-40c8-887e-8d733a2b9ef5';
 const projectId = 'cbed0b2f-fcaf-431e-9169-0ac17e62a59e';
 const foreignId = '185fd9f7-9467-4a82-924c-a514d05dc7a1';
+const pendingId = '4cca6eed-567e-4b62-9dde-66a15a629d54';
 const oldPhone = '202-555-0164';
 const newPhone = '555010123';
 const phoneText = (value) => `Contact details\nPhone: ${value}.\nCall after 5 pm.`;
 const correction = `i changed to a new number, this is my current number "${newPhone}"`;
+const longCorrection = `i got a new number, i no longer have my old number, so replace the old one with "${newPhone}"`;
+const incompleteCorrection = 'Change my phone number';
 const phoneQuestion = 'what is my phone number';
 const projectQuestion = 'What did the project decision say?';
 const projectNote = 'The project decision was to ship a search prototype first.';
@@ -83,7 +86,8 @@ function fixture({ plan, evidence, beforeUpdate, writeError, embeddingError } = 
       }
       if (update) {
         beforeUpdate?.(rows);
-        if (writeError) return { data: null, error: { code: 'XX000' } };
+        const failed = typeof writeError === 'function' ? writeError() : writeError;
+        if (failed) return { data: null, error: { code: 'XX000' } };
       }
       const matching = records.filter((record) => filters.every((filter) => filter(record))).slice(0, limit);
       if (update) matching.forEach((record) => {
@@ -143,6 +147,7 @@ function fixture({ plan, evidence, beforeUpdate, writeError, embeddingError } = 
       message, mode: 'auto', strictness: 0.4, maxSources: 5, models: ['fixture'], ...options,
     }),
     rows,
+    history,
     modelCalls,
     mutations,
   };
@@ -152,6 +157,15 @@ const updateReceipt = [{ id: phoneId, title: null, action: 'updated' }];
 const searchPlan = (searchText, facts = []) => ({
   needsMemory: Boolean(searchText), searchText, updateRequested: false, update: null, conversation: 'other', facts,
 });
+
+function recordClarification(history, result, { userId = owner, question = incompleteCorrection, id = pendingId } = {}) {
+  history.push({
+    id, user_id: userId, question, answer: result.answer,
+    sources: result.sources, meta: result.meta, settings: { memoryMode: 'auto' },
+    created_at: new Date().toISOString(),
+  });
+  return { historyId: id, question, sourceIds: result.sources.map((source) => source.id) };
+}
 
 test('the reported declaration updates the original note with no prior chat or model', async () => {
   const { run, rows, modelCalls, mutations } = fixture();
@@ -173,6 +187,115 @@ test('the reported declaration updates the original note with no prior chat or m
   assert.doesNotMatch(recalled.answer, /202-555-0164/);
   assert.deepEqual(recalled.sources.map((source) => source.id), [phoneId]);
   assert.deepEqual(modelCalls, []);
+});
+
+test('a correction with a longer explanation uses the replacement already in the message', async () => {
+  const { run, rows, modelCalls, mutations } = fixture();
+  const recall = await run(phoneQuestion);
+  const reference = { question: phoneQuestion, sourceIds: recall.sources.map(({ id }) => id) };
+  assert.deepEqual(reference.sourceIds, [phoneId]);
+  const updated = await run(longCorrection, { reference });
+  assert.deepEqual(updated.meta?.memoryChanges, updateReceipt);
+  assert.equal(rows.find(({ id }) => id === phoneId).content, phoneText(newPhone));
+  assert.match((await run(phoneQuestion)).answer, /555010123/);
+  assert.equal((await run(longCorrection, { reference })).meta?.memoryChanges?.length ?? 0, 0);
+  assert.deepEqual(modelCalls, []);
+  assert.deepEqual(mutations, ['update']);
+});
+
+test('a bare reply completes a saved phone clarification and updates the same note once', async () => {
+  const { run, history, rows, modelCalls, mutations } = fixture();
+  const clarified = await run(incompleteCorrection);
+  assert.match(clarified.answer, /new phone number/i);
+  assert.equal(clarified.meta?.memoryChanges?.length ?? 0, 0);
+  assert.equal(clarified.meta?.pendingContactUpdate?.memoryId, phoneId);
+  assert.deepEqual(clarified.sources.map(({ id }) => id), [phoneId]);
+  const reference = recordClarification(history, clarified);
+
+  const updated = await run(newPhone, { reference });
+  assert.deepEqual(updated.meta?.memoryChanges, updateReceipt);
+  assert.equal(updated.meta?.pendingContactUpdate, undefined);
+  assert.equal(rows.find(({ id }) => id === phoneId).content, phoneText(newPhone));
+  assert.equal((await run(newPhone, { reference })).meta?.memoryChanges?.length ?? 0, 0);
+  assert.equal((await run('2025550102', { reference })).meta?.memoryChanges?.length ?? 0, 0);
+  assert.match((await run(phoneQuestion)).answer, /555010123/);
+  assert.deepEqual(mutations, ['update']);
+  assert.deepEqual(modelCalls, []);
+});
+
+test('bare numbers without the matching owned clarification cannot change the notebook', async () => {
+  const { run, history, mutations } = fixture();
+  const clarified = await run(incompleteCorrection);
+  const reference = recordClarification(history, clarified, { userId: otherOwner });
+  const attempts = [
+    {},
+    { reference: { question: incompleteCorrection, sourceIds: [phoneId] } },
+    { reference },
+  ];
+  for (const options of attempts) {
+    const result = await run(newPhone, options);
+    assert.equal(result.meta?.memoryChanges?.length ?? 0, 0);
+  }
+  history[0].user_id = owner;
+  const wrongQuestion = await run(newPhone, { reference: { ...reference, question: projectQuestion } });
+  assert.equal(wrongQuestion.meta?.memoryChanges?.length ?? 0, 0);
+  const replay = await run(newPhone, { mode: 'read-only', reference });
+  assert.equal(replay.meta?.memoryChanges?.length ?? 0, 0);
+  assert.match((await run(phoneQuestion)).answer, /202-555-0164/);
+  assert.deepEqual(mutations, []);
+});
+
+test('an email or incomplete number retains the pending phone correction', async () => {
+  const { run, history, mutations } = fixture();
+  const clarified = await run(incompleteCorrection);
+  const reference = recordClarification(history, clarified);
+  const shortValue = await run('202', { reference });
+  assert.equal(shortValue.meta?.memoryChanges?.length ?? 0, 0);
+  assert.equal(shortValue.meta?.pendingContactUpdate?.memoryId, phoneId);
+  const wrongType = 'synthetic@example.test';
+  const promptedAgain = await run(wrongType, { reference });
+  assert.equal(promptedAgain.meta?.memoryChanges?.length ?? 0, 0);
+  assert.match(promptedAgain.answer, /new phone number/i);
+  assert.equal(promptedAgain.meta?.pendingContactUpdate?.memoryId, phoneId);
+  const nextReference = recordClarification(history, promptedAgain, {
+    question: wrongType, id: '09676c20-e0fb-4746-bd40-711d986f521d',
+  });
+  assert.deepEqual((await run(newPhone, { reference: nextReference })).meta?.memoryChanges, updateReceipt);
+  assert.deepEqual(mutations, ['update']);
+});
+
+test('a note changed after the clarification cannot be overwritten by a bare reply', async () => {
+  const { run, history, rows, mutations } = fixture();
+  const clarified = await run(incompleteCorrection);
+  const reference = recordClarification(history, clarified);
+  const interveningValue = '202-555-0138';
+  rows.find(({ id }) => id === phoneId).content = phoneText(interveningValue);
+  const stale = await run(newPhone, { reference });
+  assert.equal(stale.meta?.memoryChanges?.length ?? 0, 0);
+  assert.match(stale.answer, /note changed/);
+  assert.ok((await run(phoneQuestion)).answer.includes(interveningValue));
+  assert.deepEqual(mutations, []);
+});
+
+test('a failed pending reply has no success receipt and can retry against the same note', async () => {
+  let attempts = 0;
+  const { run, history, mutations } = fixture({ writeError: () => attempts++ === 0 });
+  const clarified = await run(incompleteCorrection);
+  assert.equal(clarified.meta?.pendingContactUpdate?.memoryId, phoneId);
+  const reference = recordClarification(history, clarified);
+  const result = await run(newPhone, { reference });
+  assert.equal(result.meta?.memoryChanges?.length ?? 0, 0);
+  assert.doesNotMatch(result.answer, /\bI (?:updated|saved|noted)\b/i);
+  assert.match((await run(phoneQuestion)).answer, /202-555-0164/);
+  assert.deepEqual(mutations, []);
+  assert.equal(result.meta?.pendingContactUpdate?.memoryId, phoneId);
+  const retryReference = recordClarification(history, result, {
+    question: newPhone, id: '73cdb81c-6ebf-4665-8efa-e26c754b9cf0',
+  });
+  const retried = await run(newPhone, { reference: retryReference });
+  assert.deepEqual(retried.meta?.memoryChanges, updateReceipt);
+  assert.match((await run(phoneQuestion)).answer, /555010123/);
+  assert.deepEqual(mutations, ['update']);
 });
 
 test('a failed database write cannot yield a receipt or change a later answer', async () => {

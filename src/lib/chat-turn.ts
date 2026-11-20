@@ -1,7 +1,14 @@
 import "server-only";
 
 import { planChatMessage } from "@/lib/chat-intent-router";
-import { handleChatMemory, lookupSavedEmail, lookupSavedPhone, type ChatMemoryOutcome } from "@/lib/chat-memory";
+import {
+  handleChatMemory,
+  lookupSavedEmail,
+  lookupSavedPhone,
+  parseContactValueReply,
+  resumeContactCorrection,
+  type ChatMemoryOutcome,
+} from "@/lib/chat-memory";
 import {
   getDirectChatMemoryIntent,
   getEmailRecallSubject,
@@ -51,17 +58,26 @@ export async function runChatTurn(client: MemoryClient, userId: string, input: C
   const { memoryText, lookup } = splitLookup(message);
   const lookupOnly = lookup === message;
   const previousQuestion = reference?.question;
+  const valueReply = lookupOnly ? null : parseContactValueReply(memoryText, !!reference?.historyId);
   const contact = lookupOnly ? null : getStandaloneContactIntent(memoryText, previousQuestion);
   const direct = getDirectChatMemoryIntent(memoryText, previousQuestion, mode === "auto");
-  const plan = lookupOnly || contact ? null : await planChatMessage(message, previousQuestion, mode, input.models[0]);
+  const plan = lookupOnly || contact || valueReply ? null
+    : await planChatMessage(message, previousQuestion, mode, input.models[0]);
   const mayUseContact = contact && (contact.explicit || mode === "auto");
   const writeRequested = !!(mayUseContact || plan?.updateRequested || direct.kind !== "none" || WRITE_REQUEST.test(memoryText));
 
   // Contact values come from the user's words. A model can propose other
   // mutations, but the storage layer validates and applies all of them.
-  const memory: ChatMemoryOutcome = lookupOnly ? {} : mode === "read-only" && writeRequested
-    ? { reply: "This replay is read-only. Send the update from the chat composer to change your notebook." }
-    : await handleChatMemory(client, userId, memoryText, mode, reference, plan, contact ?? direct);
+  let memory: ChatMemoryOutcome = {};
+  if (!lookupOnly) {
+    if (mode === "read-only") {
+      if (writeRequested || valueReply) memory.reply = "This replay is read-only. Send the update from the chat composer to change your notebook.";
+    } else if (valueReply) {
+      memory = await resumeContactCorrection(client, userId, reference, valueReply);
+    } else {
+      memory = await handleChatMemory(client, userId, memoryText, mode, reference, plan, contact ?? direct);
+    }
+  }
 
   // Only a separate question may reach retrieval. Never ask the answer model
   // to interpret an unresolved statement or speak about a database operation.
@@ -85,7 +101,12 @@ export async function runChatTurn(client: MemoryClient, userId: string, input: C
   return {
     ...result,
     answer: [reply, result.answer].filter(Boolean).join("\n\n") || CONVERSATION_REPLIES[plan?.conversation ?? "other"],
-    ...(memory.changes?.length ? { meta: { ...result.meta, memoryChanges: memory.changes } } : {}),
+    sources: [...new Map([...result.sources, ...(memory.sources ?? [])].map((source) => [source.id, source])).values()],
+    ...(memory.changes?.length || memory.pendingContactUpdate ? { meta: {
+      ...result.meta,
+      ...(memory.changes?.length ? { memoryChanges: memory.changes } : {}),
+      ...(memory.pendingContactUpdate ? { pendingContactUpdate: memory.pendingContactUpdate } : {}),
+    } } : {}),
     ...(memory.memories?.length ? { changedMemories: memory.memories } : {}),
   };
 }

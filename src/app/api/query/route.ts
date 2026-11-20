@@ -9,15 +9,21 @@ const DEFAULT_MODELS = (process.env.OPENROUTER_MODELS ?? "openrouter/free")
   .split(",")
   .map((model) => model.trim())
   .filter(Boolean);
-const MEMORY_ID = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i;
+const UUID = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i;
 
 function parseReference(value: unknown): ChatReference | undefined {
   if (!value || typeof value !== "object" || !("question" in value)
     || typeof value.question !== "string") return undefined;
   const sourceIds = "sourceIds" in value && Array.isArray(value.sourceIds)
-    ? value.sourceIds.slice(0, 5).filter((id): id is string => typeof id === "string" && MEMORY_ID.test(id))
+    ? value.sourceIds.slice(0, 5).filter((id): id is string => typeof id === "string" && UUID.test(id))
     : [];
-  return { question: value.question.slice(0, 2000), sourceIds: [...new Set(sourceIds)] };
+  const historyId = "historyId" in value && typeof value.historyId === "string" && UUID.test(value.historyId)
+    ? value.historyId : undefined;
+  return {
+    question: value.question.slice(0, 2000),
+    sourceIds: [...new Set(sourceIds)],
+    ...(historyId ? { historyId } : {}),
+  };
 }
 
 function boundedNumber(value: unknown, fallback: number, min: number, max: number): number {
@@ -60,8 +66,9 @@ export async function POST(request: NextRequest) {
       models,
     });
 
+    const pending = result.meta?.pendingContactUpdate;
     try {
-      const { error } = await client.from("query_history").insert({
+      const insert = client.from("query_history").insert({
         user_id: user.id,
         question,
         answer: result.answer,
@@ -69,9 +76,22 @@ export async function POST(request: NextRequest) {
         meta: result.meta ?? {},
         settings: { strictness, maxSources, modelOrder: models, memoryMode },
       });
-      if (error) console.warn("[query] could not save history");
+      if (pending) {
+        const { data, error } = await insert.select("id").single();
+        if (error || typeof data?.id !== "string" || !UUID.test(data.id)) throw new Error("Missing history ID");
+        result.historyId = data.id;
+      } else {
+        const { error } = await insert;
+        if (error) throw error;
+      }
     } catch {
       console.warn("[query] could not save history");
+      if (result.meta?.pendingContactUpdate) {
+        delete result.meta.pendingContactUpdate;
+        // Replace the clarification and preserve any separate notebook answer.
+        const [, ...rest] = result.answer.split("\n\n");
+        result.answer = ["I couldn’t keep this correction open. Send the full update with the new value in one message.", ...rest].join("\n\n");
+      }
     }
     return NextResponse.json({ data: result });
   } catch {
