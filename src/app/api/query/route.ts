@@ -189,7 +189,7 @@ export async function POST(request: NextRequest) {
             answer: result.answer,
             sources: result.sources,
             meta: result.meta ?? {},
-            settings: { strictness, maxSources, modelOrder: runtimeModels },
+            settings: { strictness, maxSources, modelOrder: runtimeModels, memoryMode },
           });
           if (error) console.warn("[query] could not save history");
         } catch {

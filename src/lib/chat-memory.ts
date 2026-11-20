@@ -3,6 +3,8 @@ import {
   detectChatMemoryIntent,
   findEmailAddresses,
   isEmailSubject,
+  literalEmailReplacement,
+  referencedEmailReplacementSubject,
   type ChatMemoryIntent,
 } from "@/lib/chat-memory-intent";
 import {
@@ -24,6 +26,7 @@ type ChatMemoryOutcome = {
 
 const MAX_CANDIDATES = 100;
 const SINGLE_VALUE_TITLES = new Set(["name", "full name", "first name", "last name", "preferred name", "where i live", "employer"]);
+const ASK_FOR_NEW_EMAIL = "Which new email address should I use? Send the update with the full address.";
 
 function hasSingleValue(title: string): boolean {
   return SINGLE_VALUE_TITLES.has(title) || /^(?:favou?rite|preferred)\s+/.test(title);
@@ -224,6 +227,58 @@ async function editFromChat(
   return { ...changed("updated", [updated]), reply: "I updated your memory." };
 }
 
+async function editReferencedEmail(
+  client: MemoryClient,
+  userId: string,
+  message: string,
+  subject: string,
+  reference?: ChatReference,
+): Promise<ChatMemoryOutcome> {
+  if (!reference?.question) return { reply: ASK_FOR_NEW_EMAIL };
+
+  // Use the latest user-authored request, since citations and saved answers can
+  // still contain the old address. A replay from History cannot supply a value.
+  const { data: previous, error } = await client
+    .from("query_history")
+    .select("question, answer, meta, settings")
+    .eq("user_id", userId)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (error || previous?.question !== reference.question) return { reply: ASK_FOR_NEW_EMAIL };
+
+  const previousMode = previous.settings?.memoryMode;
+  const legacyClarification = previousMode === undefined
+    && previous.answer === "Which memory should I update, and what should it say?";
+  if (previousMode !== "auto" && previousMode !== "manual" && !legacyClarification) {
+    return { reply: ASK_FOR_NEW_EMAIL };
+  }
+
+  const priorIntent = literalEmailReplacement(previous.question);
+  const currentScope = emailScope(subject);
+  const previousScope = priorIntent && emailScope(priorIntent.subject);
+  if (!priorIntent || (currentScope && previousScope && currentScope !== previousScope)) {
+    return { reply: ASK_FOR_NEW_EMAIL };
+  }
+
+  const intent = { ...priorIntent, subject: currentScope ? subject : priorIntent.subject };
+  const receipts = previous.meta?.memoryChanges;
+  const applied = Array.isArray(receipts)
+    ? receipts.find((receipt: ChatMemoryChange) => receipt?.action === "updated" && typeof receipt.id === "string")
+    : undefined;
+  if (!applied) return editFromChat(client, userId, message, intent);
+
+  // An edit already acknowledged by chat is a no-op. Do not undo a newer edit.
+  const { data: note, error: noteError } = await client
+    .from("memories").select(MEMORY_COLUMNS)
+    .eq("user_id", userId).eq("id", applied.id).maybeSingle();
+  if (!noteError && note?.user_id === userId
+    && emailFields(note, intent.subject).some((address) => normalize(address) === normalize(intent.value))) {
+    return { reply: "That memory already has this value.", memories: [note] };
+  }
+  return { reply: "That memory has changed since the last update. Send the update with the full address to confirm." };
+}
+
 export async function handleChatMemory(
   client: MemoryClient,
   userId: string,
@@ -232,6 +287,14 @@ export async function handleChatMemory(
   reference?: ChatReference,
 ): Promise<ChatMemoryOutcome> {
   if (mode === "read-only") return {};
+  const referencedEmail = referencedEmailReplacementSubject(message);
+  if (referencedEmail) {
+    try {
+      return await editReferencedEmail(client, userId, message, referencedEmail, reference);
+    } catch {
+      return { reply: "I couldn’t update the memory. You can retry or open the note and edit it directly." };
+    }
+  }
   const intent = await detectChatMemoryIntent(message, reference?.question, mode === "auto");
   if (intent.kind === "none") return {};
   if (intent.kind === "clarify") return { reply: intent.message };
