@@ -17,8 +17,10 @@ const CLARIFY_UPDATE: ChatMemoryIntent = {
 const EMAIL = /[a-z\d.!#$%&'*+/=?^_{|}~-]+@[a-z\d](?:[a-z\d-]*[a-z\d])?(?:\.[a-z\d](?:[a-z\d-]*[a-z\d])?)+/gi;
 const EMAIL_TOPIC = /\be-?mail(?:\s+(?:address|id))?\b/i;
 const EMAIL_SUBJECT = /^(?:(?:my|the)\s+)?(?:(?:personal|work|school|primary|secondary|new|old)\s+)?e-?mail(?:\s+(?:address|id))?(?:\s+(?:note|memory)|\s+in\s+(?:my|the)\s+(?:saved\s+)?(?:note|notes|memory|notebook))?$/i;
+const CHAT_PREAMBLE = /^(?:(?:ok(?:ay)?|hi|hey|yes|yeah|sure|actually)\b\s*(?:[,.!:]\s*|\s+))+/i;
 const EDIT_START = /^(?:please\s+)?(?:(?:can|could|would|will)\s+you\s+|i\s+want\s+you\s+to\s+)?(?:please\s+)?(change|update|replace|set|edit|correct|revise|modify)\s+/i;
-const EDIT_END = /(?:\s*[,;]\s*|\s+)(?:and\s+)?(?:please\s+)?(?:update|change|edit|correct)(?:\s+(?:it|that)|\s+(?:my|the|this|that)\s+(?:memory|note))(?:\s+in\s+(?:my|the)\s+notebook)?[.!?]*$/i;
+const EDIT_END = /(?:\s*[,;]\s*|\s+)(?:and\s+)?(?:please\s+)?(?:update|change|edit|correct)(?:\s+(?:it|this|that)(?:\s+(?:in|as|is)\s+(?:(?:my|the|your)\s+)?(?:memory|memroy|notes?|notebook))?|\s+(?:my|the|this|that)\s+(?:memory|memroy|notes?))(?:\s+in\s+(?:my|the)\s+notebook)?[.!?]*$/i;
+const EMAIL_DECLARATION = /^(?:(?:this|here)\s+is\s+|here['’]s\s+)?((?:(?:my|the)\s+)?(?:(?:new|updated|current|correct)\s+)?(?:(?:personal|work|school|primary|secondary)\s+)?e-?mail(?:\s+(?:address|id))?)(?:\s+is\s+|\s*[:=]\s*|\s+)([\s\S]+)$/i;
 const EDIT_WRAPPER = /^(?:(?:my|the|this|that)\s+)?(?:memory|memroy|note|notebook)\s+to\s+/i;
 const REPLACEMENT = /^([\s\S]+?)\s+(?:to|with|as)\s+([\s\S]+)$/i;
 const REPLACEMENT_START = /(?:\b(?:to|with|as|is|should be)\s+["“‘']?|[:=]\s*["“‘']?)$/i;
@@ -65,12 +67,14 @@ function canWriteFromMessage(message: string): boolean {
 }
 
 function getExplicitEdit(message: string) {
-  const prefix = message.match(EDIT_START);
-  const suffix = message.match(EDIT_END);
+  const current = message.replace(CHAT_PREAMBLE, "");
+  if (QUOTED_OR_PASTED.test(current)) return null;
+  const prefix = current.match(EDIT_START);
+  const suffix = current.match(EDIT_END);
   if (!prefix && !suffix) return null;
 
   // A trailing instruction can qualify a statement such as "My email is x, update the memory."
-  const statement = message.slice(prefix?.[0].length ?? 0, suffix?.index ?? message.length);
+  const statement = current.slice(prefix?.[0].length ?? 0, suffix?.index ?? current.length);
   const wrapper = prefix && statement.match(EDIT_WRAPPER);
   if (wrapper) {
     const wrapped = statement.slice(wrapper[0].length);
@@ -100,6 +104,13 @@ function literalEmail(value: string): string | undefined {
 function checkDirectUpdate(edit: ReturnType<typeof getExplicitEdit>, previousQuestion: string | undefined): ChatMemoryIntent | null {
   if (!edit) return null;
   const { verb, statement } = edit;
+  const declaration = !verb && statement.match(EMAIL_DECLARATION);
+  if (declaration) {
+    const value = literalEmail(declaration[2]);
+    return value
+      ? { kind: "update", subject: emailSubject(declaration[1]), value }
+      : CLARIFY_UPDATE;
+  }
   if (verb === "replace") {
     const findReplace = statement.match(/^["“']([^"”']+)["”']\s+with\s+["“']([^"”']+)["”']\s+in\s+(.+)$/i)
       ?? statement.match(/^(.+?)\s+with\s+(.+?)\s+in\s+((?:the\s+)?(?:note|memory)\s+(?:titled|named|called)\s+.+)$/i);
@@ -313,6 +324,7 @@ export async function detectChatMemoryIntent(
   const directUpdate = checkDirectUpdate(edit, context);
   if (directUpdate?.kind === "update") return directUpdate;
   if (directUpdate?.kind === "clarify") {
+    if (edit && !edit.verb && EMAIL_DECLARATION.test(edit.statement)) return directUpdate;
     const replacement = edit?.statement.match(REPLACEMENT);
     if (replacement && isEmailSubject(trimSubject(replacement[1]))) return directUpdate;
     if (!REPLACEMENT_CANDIDATE.test(current)) return directUpdate;
