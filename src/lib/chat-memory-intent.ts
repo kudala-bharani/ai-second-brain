@@ -11,15 +11,33 @@ const CLARIFY_UPDATE: ChatMemoryIntent = {
   kind: "clarify",
   message: "Which memory should I update, and what should it say?",
 };
+const CLARIFY_EMAIL_REPLACEMENT: ChatMemoryIntent = {
+  kind: "clarify",
+  message: "What is the new email address? Include the full replacement address in your update.",
+};
 
 const EMAIL = /[a-z\d.!#$%&'*+/=?^_{|}~-]+@[a-z\d](?:[a-z\d-]*[a-z\d])?(?:\.[a-z\d](?:[a-z\d-]*[a-z\d])?)+/gi;
 const EMAIL_TOPIC = /\be[ -]?mail\b/i;
-const LABELLED_EMAIL_TYPO = /\b(?:new|updated|current|correct|personal|work|school|primary|secondary)\s+(?:(?:personal|work|school|primary|secondary)\s+)?emil\b|\bemil\s+(?:address|id)\b/i;
-const EMAIL_SUBJECT = /^(?:(?:my|the)\s+)?(?:(?:new|old|updated|current|correct)\s+)?(?:(?:personal|work|school|primary|secondary)\s+)?(?:e[ -]?mail|emil)(?:\s+(?:address|id))?(?:\s+(?:note|memory)|\s+in\s+(?:my|the)\s+(?:saved\s+)?(?:note|notes|memory|notebook))?$/i;
+const LABELLED_EMAIL_TYPO = /\b(?:new|updated|current|correct(?:ed)?|personal|work|school|primary|secondary)\s+(?:(?:personal|work|school|primary|secondary)\s+)?emil\b|\bemil\s+(?:address|id)\b/i;
+const EMAIL_SUBJECT = /^(?:(?:my|the)\s+)?(?:(?:new|old|updated|current|correct(?:ed)?)\s+)?(?:(?:personal|work|school|primary|secondary)\s+)?(?:e[ -]?mail|emil)(?:\s+(?:address|id))?(?:\s+(?:note|memory)|\s+in\s+(?:my|the)\s+(?:saved\s+)?(?:note|notes|memory|notebook))?$/i;
 const CHAT_PREAMBLE = /^(?:(?:ok(?:ay)?|hi|hey|yes|yeah|sure|actually|now)\b\s*(?:[,.!:]\s*|\s+))+/i;
 const EDIT_START = /^(?:please\s+)?(?:(?:can|could|would|will)\s+(?:you|u)\s+|i\s+want\s+(?:you|u)\s+to\s+)?(?:please\s+)?(change|update|replace|set|edit|correct|revise|modify)\s+/i;
 const EDIT_END = /(?:\s*[,;]\s*|\s+)(?:and\s+)?(?:please\s+)?(?:update|change|edit|correct)(?:\s+(?:it|this|that)(?:\s+(?:in|as|is)\s+(?:(?:my|the|your)\s+)?(?:memory|memroy|notes?|notebook))?|\s+(?:my|the|this|that)\s+(?:memory|memroy|notes?))(?:\s+in\s+(?:my|the)\s+notebook)?[.!?]*$/i;
-const EMAIL_DECLARATION = /^(?:(?:this|here)\s+is\s+|here['’]s\s+)?((?:(?:my|the|this|that)\s+)?(?:(?:new|updated|current|correct)\s+)?(?:(?:personal|work|school|primary|secondary)\s+)?(?:e[ -]?mail|emil)(?:\s+(?:address|id))?)(?:\s+is\s+|\s*[:=]\s*|\s+)([\s\S]+)$/i;
+const EMAIL_DECLARATION = /^(?:(?:this|here)\s+is\s+|here['’]s\s+)?((?:(?:my|the|this|that)\s+)?(?:(?:new|updated|current|correct(?:ed)?)\s+)?(?:(?:personal|work|school|primary|secondary)\s+)?(?:e[ -]?mail|emil)(?:\s+(?:address|id))?)(?:\s+is\s+|\s*[:=]\s*|\s+)([\s\S]+)$/i;
+const EMAIL_FIELD = "(?:(?:personal|work|school|primary|secondary)\\s+)?(?:e[ -]?mail|emil)(?:\\s+(?:address|id))?";
+const OWN_EMAIL_FIELD = "my\\s+" + EMAIL_FIELD;
+const EMAIL_CHANGE_VERB = "(?:changed|updated|switched|corrected)";
+const EMAIL_CHANGE_DECLARATION = new RegExp(
+  "^(?:i(?:['’]ve)?\\s+(?:(?:have|just|recently)\\s+){0,2}" + EMAIL_CHANGE_VERB + "\\s+(" + OWN_EMAIL_FIELD + ")"
+    + "|(" + OWN_EMAIL_FIELD + ")\\s+(?:(?:has|been|just|recently)\\s+){0,3}" + EMAIL_CHANGE_VERB + ")\\b([\\s\\S]*)$",
+  "i",
+);
+const EMAIL_RECALL = new RegExp(
+  "^(?:please\\s+)?(?:what(?:['’]s|\\s+is)\\s+"
+    + "|(?:(?:can|could|would)\\s+(?:you|u)\\s+)?(?:tell|show|remind)\\s+me\\s+(?:of\\s+)?)"
+    + "(my\\s+(?:(?:current|saved|stored)\\s+)?" + EMAIL_FIELD + ")(?:\\s+please)?[.!?]*$",
+  "i",
+);
 const EDIT_WRAPPER = /^(?:(?:my|the|this|that)\s+)?(?:memory|memroy|note|notebook)\s+to\s+/i;
 const UNNAMED_MEMORY = /^(?:(?:my|the|this|that)\s+)?(?:memory|memroy|note|notebook)$/i;
 const REPLACEMENT = /^([\s\S]+?)\s+(?:to|with|as)\s+([\s\S]+)$/i;
@@ -49,6 +67,11 @@ export function isEmailSubject(subject: string): boolean {
 function emailSubject(text: string): string {
   const qualifier = text.match(/\b(personal|work|school|primary|secondary)\s+(?:e[ -]?mail|emil)\b/i)?.[1];
   return qualifier ? qualifier.charAt(0).toUpperCase() + qualifier.slice(1).toLowerCase() + " email" : "Email address";
+}
+
+export function getEmailRecallSubject(message: string): string | undefined {
+  const field = message.trim().replace(CHAT_PREAMBLE, "").match(EMAIL_RECALL)?.[1];
+  return field && hasEmailTopic(field) ? emailSubject(field) : undefined;
 }
 
 function trimValue(input: string): string {
@@ -94,7 +117,8 @@ function getExplicitEdit(message: string) {
 
 export function isDirectMemoryEditRequest(message: string): boolean {
   const current = message.trim();
-  return canWriteFromMessage(current) && getExplicitEdit(current) !== null;
+  return canWriteFromMessage(current)
+    && (getExplicitEdit(current) !== null || declaredEmailCorrection(current) !== null);
 }
 
 export function referencedEmailReplacementSubject(message: string): string | null {
@@ -123,6 +147,49 @@ function literalEmail(value: string): string | undefined {
 function emailDeclaration(text: string): RegExpMatchArray | null {
   const match = text.match(EMAIL_DECLARATION);
   return match && hasEmailTopic(match[1]) ? match : null;
+}
+
+function declaredEmailCorrection(message: string): ChatMemoryIntent | null {
+  if (message.endsWith("?")) return null;
+  const current = message.replace(CHAT_PREAMBLE, "");
+  const change = current.match(EMAIL_CHANGE_DECLARATION);
+  const field = change?.[1] ?? change?.[2];
+  if (change && field && hasEmailTopic(field)) {
+    const subject = emailSubject(field);
+    const tail = change[3].trim();
+    if (tail && !/^(?:[,;:.—–-]|(?:from|to|now|and|so)\b)/i.test(tail)) return null;
+    const transition = tail.match(/^from\s+(.+?)\s+to\s+(.+)$/i);
+    if (transition) {
+      const previousValue = literalEmail(transition[1]);
+      const value = literalEmail(transition[2]);
+      return previousValue && value
+        ? { kind: "update", subject, value, previousValue }
+        : CLARIFY_EMAIL_REPLACEMENT;
+    }
+
+    const to = tail.match(/^to\s+(.+)$/i);
+    const rest = tail.replace(/^[,;:.—–-]\s*/, "").replace(/^(?:(?:and|so)\s+)?(?:now\s+)?/i, "");
+    const declaration = emailDeclaration(rest);
+    const mentionedSubject = declaration && /^my\s+/i.test(declaration[1]) ? emailSubject(declaration[1]) : null;
+    if (mentionedSubject && subject !== "Email address"
+      && mentionedSubject !== "Email address" && subject !== mentionedSubject) return CLARIFY_EMAIL_REPLACEMENT;
+
+    const replacement = to?.[1] ?? (mentionedSubject ? declaration?.[2] : undefined)
+      ?? rest.match(/^it(?:['’]s|\s+is)\s+(.+)$/i)?.[1];
+    const value = replacement && literalEmail(replacement.replace(/^now\s+/i, ""));
+    return value
+      ? { kind: "update", subject: subject === "Email address" ? mentionedSubject ?? subject : subject, value }
+      : CLARIFY_EMAIL_REPLACEMENT;
+  }
+
+  const declaration = emailDeclaration(current);
+  if (!declaration || !/^my\s+/i.test(declaration[1])
+    || (!/^my\s+(?:new|updated|correct(?:ed)?)\s+/i.test(declaration[1])
+      && !/^now\s+/i.test(declaration[2]))) return null;
+  const value = literalEmail(declaration[2].replace(/^now\s+/i, ""));
+  return value
+    ? { kind: "update", subject: emailSubject(declaration[1]), value }
+    : CLARIFY_EMAIL_REPLACEMENT;
 }
 
 function checkDirectUpdate(edit: ReturnType<typeof getExplicitEdit>, previousQuestion: string | undefined): ChatMemoryIntent | null {
@@ -210,7 +277,7 @@ function checkDirectUpdate(edit: ReturnType<typeof getExplicitEdit>, previousQue
 export function literalEmailReplacement(message: string): Extract<ChatMemoryIntent, { kind: "update" }> | null {
   const current = message.trim();
   if (!canWriteFromMessage(current)) return null;
-  const intent = checkDirectUpdate(getExplicitEdit(current), undefined);
+  const intent = checkDirectUpdate(getExplicitEdit(current), undefined) ?? declaredEmailCorrection(current);
   return intent?.kind === "update" && isEmailSubject(intent.subject) && literalEmail(intent.value) === intent.value
     ? { ...intent, subject: emailSubject(intent.subject) }
     : null;
@@ -265,7 +332,7 @@ export function getDirectChatMemoryIntent(
   if (!canWriteFromMessage(current)) return NO_INTENT;
 
   const context = previousQuestion && canWriteFromMessage(previousQuestion) ? previousQuestion.slice(0, 500) : undefined;
-  const directUpdate = checkDirectUpdate(getExplicitEdit(current), context);
+  const directUpdate = checkDirectUpdate(getExplicitEdit(current), context) ?? declaredEmailCorrection(current);
   if (directUpdate) return directUpdate;
 
   const content = current.replace(CHAT_PREAMBLE, "");
