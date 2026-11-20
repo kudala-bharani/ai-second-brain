@@ -194,8 +194,9 @@ async function editFromChat(
     referenceIds,
   );
   const subject = subjectName(intent.subject);
+  const email = isEmailSubject(intent.subject);
   const candidates = notes
-    .filter((note) => isEmailSubject(intent.subject) || !intent.previousValue
+    .filter((note) => email || !intent.previousValue
       || referenceIds.includes(note.id)
       || normalize(note.title ?? "").includes(subject)
       || normalize(note.content).includes(subject))
@@ -205,7 +206,8 @@ async function editFromChat(
   const exactMatches = candidates.filter(({ memory }) =>
     subjectName(memory.title ?? "") === subjectName(intent.subject));
   const referenced = candidates.filter(({ memory }) => referenceIds.includes(memory.id));
-  const likely = exactMatches.length ? exactMatches : referenced.length ? referenced : candidates;
+  const referredEmail = email && /\be-?mail\b/i.test(reference?.question ?? "") && referenced.length > 0;
+  const likely = referredEmail ? referenced : exactMatches.length ? exactMatches : referenced.length ? referenced : candidates;
 
   if (likely.length !== 1 || (incomplete && !exactMatches.length && !referenced.length)) {
     if (likely.length > 1 || incomplete) {
