@@ -1,7 +1,8 @@
 import { createHash } from "node:crypto";
+import type { ChatMessagePlan } from "@/lib/chat-intent-router";
 import {
-  detectChatMemoryIntent,
   findEmailAddresses,
+  getDirectChatMemoryIntent,
   isEmailSubject,
   literalEmailReplacement,
   referencedEmailReplacementSubject,
@@ -16,6 +17,7 @@ import {
 import type { ChatMemoryChange, ChatMemoryMode, ChatReference, Memory } from "@/types";
 
 type UpdateIntent = Extract<ChatMemoryIntent, { kind: "update" }>;
+type Fact = Extract<ChatMemoryIntent, { kind: "save" }>["facts"][number];
 type Draft = { title: string | null; content: string; tags: string[] };
 type EditCandidate = { memory: Memory; draft: Draft };
 type ChatMemoryOutcome = {
@@ -184,7 +186,7 @@ async function editFromChat(
   intent: UpdateIntent,
   reference?: ChatReference,
 ): Promise<ChatMemoryOutcome> {
-  const referringToPriorNote = /\b(?:change|update|replace|edit|correct|set)\s+(?:it|that|this)\b/i.test(message);
+  const referringToPriorNote = /\b(?:change|update|replace|edit|correct|set)\s+(?:it|that|this|the\s+(?:memory|note))\b/i.test(message);
   const referenceIds = referringToPriorNote ? (reference?.sourceIds ?? []) : [];
   const { notes, incomplete } = await findCandidates(
     client,
@@ -287,32 +289,60 @@ export async function handleChatMemory(
   message: string,
   mode: ChatMemoryMode,
   reference?: ChatReference,
+  plan?: ChatMessagePlan | null,
 ): Promise<ChatMemoryOutcome> {
   if (mode === "read-only") return {};
+
+  const direct = getDirectChatMemoryIntent(message, reference?.question, mode === "auto");
   const referencedEmail = referencedEmailReplacementSubject(message);
-  if (referencedEmail) {
-    try {
-      return await editReferencedEmail(client, userId, message, referencedEmail, reference);
-    } catch {
-      return { reply: "I couldn’t update the memory. You can retry or open the note and edit it directly." };
+  const update = direct.kind === "update" ? direct
+    : plan?.update ? { kind: "update" as const, ...plan.update } : undefined;
+  const editRequested = !!(update || referencedEmail || direct.kind === "clarify" || plan?.updateRequested);
+
+  let edit: ChatMemoryOutcome = {};
+  try {
+    if (referencedEmail) {
+      edit = await editReferencedEmail(client, userId, message, referencedEmail, reference);
+    } else if (update) {
+      edit = await editFromChat(client, userId, message, update, reference);
+    } else if (editRequested) {
+      edit = { reply: direct.kind === "clarify" ? direct.message : "Tell me which memory to update and what new value to use." };
     }
-  }
-  const intent = await detectChatMemoryIntent(message, reference?.question, mode === "auto");
-  if (intent.kind === "none") return {};
-  if (intent.kind === "clarify") return { reply: intent.message };
-  if (intent.kind === "update") {
-    try {
-      return await editFromChat(client, userId, message, intent, reference);
-    } catch {
-      return { reply: "I couldn’t update the memory. You can retry or open the note and edit it directly." };
-    }
+  } catch {
+    edit = { reply: "I couldn’t update the memory. You can retry or open the note and edit it directly." };
   }
 
+  const facts = new Map<string, Fact>();
+  const proposedFacts = [...(direct.kind === "save" ? direct.facts : []), ...(plan?.facts ?? [])];
+  const unresolvedEmailEdit = !update && editRequested && /\be-?mail\b/i.test(message);
+  for (const fact of proposedFacts) {
+    const content = normalize(fact.content);
+    // The edit already accounts for its replacement value. A rejected email
+    // edit must not be converted into a second, conflicting email note.
+    if ((update && content.includes(normalize(update.value)))
+      || (unresolvedEmailEdit && findEmailAddresses(fact.content).length > 0)) continue;
+    if (!facts.has(content)) facts.set(content, fact);
+  }
+
+  if (!facts.size) return edit;
+  const capture = await rememberFacts(client, userId, Array.from(facts.values()).slice(0, 3));
+  return {
+    reply: [edit.reply, capture.reply].filter(Boolean).join("\n\n") || undefined,
+    changes: [...(edit.changes ?? []), ...(capture.changes ?? [])],
+    memories: [...(edit.memories ?? []), ...(capture.memories ?? [])],
+  };
+}
+
+async function rememberFacts(
+  client: MemoryClient,
+  userId: string,
+  facts: Fact[],
+): Promise<ChatMemoryOutcome> {
   const saved: Memory[] = [];
   const existing: Memory[] = [];
   let hasExisting = false;
   let failed = false;
-  for (const fact of intent.facts.slice(0, 3)) {
+  for (const fact of facts) {
     try {
       const { notes, incomplete } = await findCandidates(
         client, userId, fact.title, fact.content.slice(0, 120),
@@ -341,8 +371,6 @@ export async function handleChatMemory(
     }
   }
   const outcome = changed("saved", saved);
-  const explicitSave = /^(?:please\s+)?(?:(?:can|could|would)\s+you\s+)?(?:remember|save|add)\b/i.test(message);
-  if (message.endsWith("?") && !explicitSave) return saved.length ? outcome : {};
   if (saved.length) {
     const reply = saved.length === 1 ? "I saved that to your notebook." : "I saved those facts to your notebook.";
     return { ...outcome, reply: failed ? reply + " One other fact couldn’t be saved." : reply };
