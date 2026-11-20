@@ -2,11 +2,15 @@ import { createHash } from "node:crypto";
 import type { ChatMessagePlan } from "@/lib/chat-intent-router";
 import {
   findEmailAddresses,
+  findPhoneNumbers,
   getDirectChatMemoryIntent,
+  getPhoneRecallSubject,
   hasEmailTopic,
   isDirectMemoryEditRequest,
   isEmailSubject,
+  isPhoneSubject,
   literalEmailReplacement,
+  parsePhoneNumber,
   referencedEmailReplacementSubject,
   type ChatMemoryIntent,
 } from "@/lib/chat-memory-intent";
@@ -31,6 +35,7 @@ type ChatMemoryOutcome = {
 const MAX_CANDIDATES = 100;
 const SINGLE_VALUE_TITLES = new Set(["name", "full name", "first name", "last name", "preferred name", "where i live", "employer"]);
 const ASK_FOR_NEW_EMAIL = "Which new email address should I use? Send the update with the full address.";
+const PHONE_KEYWORDS = ["phone", "mobile", "cell", "contact number"];
 
 function hasSingleValue(title: string): boolean {
   return SINGLE_VALUE_TITLES.has(title) || /^(?:favou?rite|preferred)\s+/.test(title);
@@ -78,6 +83,33 @@ function emailFields(memory: Memory, subject: string): string[] {
   return findEmailAddresses(text);
 }
 
+function phoneScope(subject: string): string | undefined {
+  const title = subjectName(subject);
+  if (/\b(?:work|business|office)\b/.test(title)) return "work";
+  return title.match(/\b(?:home|personal|school|primary|secondary)\b/)?.[0]
+    ?? (/\b(?:mobile|cell)(?:[ -]?phone)?\b/.test(title) ? "mobile" : undefined);
+}
+
+function phoneNumberKey(number: string): string {
+  return number.replace(/[^\d+]/g, "");
+}
+
+function phoneFields(memory: Memory, subject: string): string[] {
+  const scope = phoneScope(subject);
+  const title = memory.title ?? "";
+  const titleIsPhone = isPhoneSubject(title);
+  const titleScope = titleIsPhone ? phoneScope(title) : undefined;
+  const numbers = memory.content.split(/\r?\n/).flatMap((line) => {
+    const field = /^\s*(?:[-*]\s+)?(.+?)\s*(?:[:=]|\s+is\b)\s*(.*)$/i.exec(line);
+    if (!field || !isPhoneSubject(field[1])) return [];
+    if (scope && (phoneScope(field[1]) ?? titleScope) !== scope) return [];
+    return findPhoneNumbers(field[2]);
+  });
+  if (numbers.length || !titleIsPhone || (scope && titleScope !== scope)) return numbers;
+  const bare = parsePhoneNumber(memory.content);
+  return bare ? [bare] : [];
+}
+
 function replaceOnce(text: string, original: string, replacement: string): string | null {
   if (!original) return null;
   const start = text.indexOf(original);
@@ -85,11 +117,14 @@ function replaceOnce(text: string, original: string, replacement: string): strin
   return text.slice(0, start) + replacement + text.slice(start + original.length);
 }
 
-function buildEdit(memory: Memory, intent: UpdateIntent): EditCandidate | null {
+function buildEdit(memory: Memory, intent: UpdateIntent, barePhone?: string): EditCandidate | null {
   const { subject, value, previousValue } = intent;
   let original = previousValue;
   const matchesTitle = subjectName(memory.title ?? "") === subjectName(subject);
   const email = isEmailSubject(subject);
+  const phone = isPhoneSubject(subject);
+  const replacement = phone ? parsePhoneNumber(value) : value;
+  if (!replacement) return null;
   if (email) {
     const addresses = emailFields(memory, subject);
     if (addresses.length > 1 && !previousValue) return null;
@@ -98,10 +133,23 @@ function buildEdit(memory: Memory, intent: UpdateIntent): EditCandidate | null {
       : addresses[0];
     if (!original) return null;
   }
+  if (phone) {
+    const numbers = barePhone ? [barePhone] : phoneFields(memory, subject);
+    if (numbers.length > 1 && !previousValue) return null;
+    const previous = previousValue && parsePhoneNumber(previousValue);
+    if (previousValue && !previous) return null;
+    original = previous
+      ? numbers.find((number) => phoneNumberKey(number) === phoneNumberKey(previous))
+      : numbers[0];
+    if (!original) return null;
+  }
 
   let content: string | null = null;
   if (original) {
-    content = replaceOnce(memory.content, original, value);
+    content = replaceOnce(memory.content, original, replacement);
+    if (barePhone && content) {
+      content = content.replace(/^\s*/, (spacing) => `${spacing}${subject}: `);
+    }
   } else {
     const label = escapeRegex(subjectName(subject)).replace(/\s+/g, "\\s+");
     const field = new RegExp(
@@ -124,7 +172,7 @@ function buildEdit(memory: Memory, intent: UpdateIntent): EditCandidate | null {
   return {
     memory,
     draft: {
-      title: original && memory.title
+      title: !phone && original && memory.title
         ? replaceOnce(memory.title, original, value) ?? memory.title
         : memory.title,
       content,
@@ -150,16 +198,20 @@ async function findCandidates(
 ) {
   const owned = () => client.from("memories").select(MEMORY_COLUMNS).eq("user_id", userId);
   const email = isEmailSubject(subject);
+  const phone = isPhoneSubject(subject);
   const titleText = email && !emailScope(subject) ? "mail" : escapePattern(subjectName(subject));
   // PostgREST receives each filter independently. Check matches in the returned rows
   // before using any of them for a write.
-  const lookups = [
+  const lookups = phone ? PHONE_KEYWORDS.flatMap((keyword) => [
+    owned().ilike("title", `%${keyword}%`).limit(MAX_CANDIDATES),
+    owned().ilike("content", `%${keyword}%`).limit(MAX_CANDIDATES),
+  ]) : [
     owned().ilike("title", "%" + titleText + "%").limit(MAX_CANDIDATES),
     email || text
       ? owned().ilike("content", email ? "%@%" : "%" + escapePattern(text) + "%").limit(MAX_CANDIDATES)
       : null,
-    referenceIds.length ? owned().in("id", referenceIds).limit(referenceIds.length) : null,
   ].filter((lookup) => lookup !== null);
+  if (referenceIds.length) lookups.push(owned().in("id", referenceIds).limit(referenceIds.length));
   const results = await Promise.all(lookups);
   const notes = new Map<string, Memory>();
   let incomplete = false;
@@ -213,11 +265,88 @@ export async function lookupSavedEmail(
   };
 }
 
+export async function lookupSavedPhone(
+  client: MemoryClient,
+  userId: string,
+  subject: string,
+): Promise<QueryResult | null> {
+  const { notes, incomplete } = await findCandidates(client, userId, subject, "");
+  const matches = new Map<string, { number: string; note: Memory }>();
+  for (const note of notes) {
+    for (const number of phoneFields(note, subject)) {
+      const key = phoneNumberKey(number);
+      if (!matches.has(key) || subjectName(note.title ?? "") === subjectName(subject)) {
+        matches.set(key, { number, note });
+      }
+    }
+  }
+
+  if (matches.size > 1 || incomplete) {
+    return {
+      answer: "I couldn’t identify a single saved phone number. Tell me which note or label to use, such as work phone or mobile.",
+      sources: [],
+    };
+  }
+  const match = matches.values().next().value;
+  if (!match) return null;
+  const { number, note } = match;
+  return {
+    answer: `Your saved ${subject.toLowerCase()} is \`${number}\`.`,
+    sources: [{ ...note, similarity: 1, evidence_snippet: number, evidence_terms: [number] }],
+    meta: { retrievalCount: 1 },
+  };
+}
+
 function changed(action: ChatMemoryChange["action"], memories: Memory[]): ChatMemoryOutcome {
   return {
     memories,
     changes: memories.map(({ id, title }) => ({ id, title, action })),
   };
+}
+
+async function verifyPhoneReferences(
+  client: MemoryClient,
+  userId: string,
+  notes: Memory[],
+  reference: ChatReference,
+  subject: string,
+): Promise<Map<string, { bareNumber?: string }>> {
+  const candidates = notes.flatMap((note) => {
+    if (!reference.sourceIds.includes(note.id)) return [];
+    const numbers = phoneFields(note, subject);
+    const bareNumber = !note.title?.trim() && !numbers.length ? parsePhoneNumber(note.content) : undefined;
+    return numbers.length || bareNumber ? [{ note, numbers, bareNumber }] : [];
+  });
+  const verified = new Map<string, { bareNumber?: string }>();
+  if (!candidates.length) return verified;
+
+  // The client points to an earlier answer. Ground that reference in the
+  // server's saved citations before treating a bare number as a phone field
+  // or replacing a value that may have changed in another chat.
+  const { data: previous, error } = await client
+    .from("query_history")
+    .select("answer, sources, meta")
+    .eq("user_id", userId)
+    .eq("question", reference.question)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (error || typeof previous?.answer !== "string" || !Array.isArray(previous.sources)) return verified;
+  const answered = new Set(findPhoneNumbers(previous.answer).map(phoneNumberKey));
+  const hasModelAnswer = typeof previous.meta?.modelUsed === "string" && !!previous.meta.modelUsed;
+  for (const { note, numbers, bareNumber } of candidates) {
+    // The provider-error response can list bare values as raw search results.
+    // It did not identify any of them as the user's phone number.
+    if (bareNumber && !hasModelAnswer) continue;
+    const cited = previous.sources.some((source: Partial<Memory> | null) =>
+      source?.id === note.id && source.user_id === userId
+      && source.title === note.title && source.content === note.content);
+    const values = bareNumber ? [bareNumber] : numbers;
+    if (cited && values.some((number) => answered.has(phoneNumberKey(number)))) {
+      verified.set(note.id, { bareNumber });
+    }
+  }
+  return verified;
 }
 
 async function editFromChat(
@@ -229,6 +358,17 @@ async function editFromChat(
 ): Promise<ChatMemoryOutcome> {
   const referringToPriorNote = /\b(?:change|update|replace|edit|correct|set)\s+(?:it|that|this|the\s+(?:memory|note))\b/i.test(message);
   const referenceIds = referringToPriorNote ? (reference?.sourceIds ?? []) : [];
+  const phone = isPhoneSubject(intent.subject);
+  const identifiesPhone = phone && (!!intent.previousValue || (!!phoneScope(intent.subject)
+    && getDirectChatMemoryIntent(message, undefined, false).kind === "update"));
+  const priorPhone = phone && !identifiesPhone && referringToPriorNote && reference
+    ? getPhoneRecallSubject(reference.question) : undefined;
+  if (priorPhone && phoneScope(priorPhone)) {
+    if (phoneScope(intent.subject) && phoneScope(intent.subject) !== phoneScope(priorPhone)) {
+      return { reply: "The last answer used a different phone label. Tell me which note you want to update." };
+    }
+    intent = { ...intent, subject: priorPhone };
+  }
   const { notes, incomplete } = await findCandidates(
     client,
     userId,
@@ -238,22 +378,27 @@ async function editFromChat(
   );
   const subject = subjectName(intent.subject);
   const email = isEmailSubject(intent.subject);
+  const phoneReferences = priorPhone && reference && referenceIds.length
+    ? await verifyPhoneReferences(client, userId, notes, reference, intent.subject) : undefined;
   const candidates = notes
-    .filter((note) => email || !intent.previousValue
+    .filter((note) => !phoneReferences || phoneReferences.has(note.id))
+    .filter((note) => email || phone || !intent.previousValue
       || referenceIds.includes(note.id)
       || normalize(note.title ?? "").includes(subject)
       || normalize(note.content).includes(subject))
-    .map((note) => buildEdit(note, intent))
+    .map((note) => buildEdit(note, intent, phoneReferences?.get(note.id)?.bareNumber))
     .filter((candidate): candidate is EditCandidate => candidate !== null);
 
   const exactMatches = candidates.filter(({ memory }) =>
     subjectName(memory.title ?? "") === subjectName(intent.subject));
   const referenced = candidates.filter(({ memory }) => referenceIds.includes(memory.id));
   const referredEmail = email && hasEmailTopic(reference?.question ?? "") && referenced.length > 0;
-  const likely = referredEmail ? referenced : exactMatches.length ? exactMatches : referenced.length ? referenced : candidates;
+  const likely = phone ? candidates
+    : referredEmail ? referenced : exactMatches.length ? exactMatches : referenced.length ? referenced : candidates;
+  const uncertain = incomplete && (phone ? !phoneReferences : !exactMatches.length && !referenced.length);
 
-  if (likely.length !== 1 || (incomplete && !exactMatches.length && !referenced.length)) {
-    if (likely.length > 1 || incomplete) {
+  if (likely.length !== 1 || uncertain) {
+    if (likely.length > 1 || uncertain) {
       const titles = [...new Set(likely.map(({ memory }) => memory.title || "Untitled memory"))].slice(0, 4);
       const choices = titles.length ? " I found " + titles.map((title) => "“" + title + "”").join(", ") + "." : "";
       return { reply: "Which memory should I update?" + choices + " Include its title or the exact text to replace in your update request." };
@@ -361,12 +506,18 @@ export async function handleChatMemory(
   const proposedFacts = [...(direct.kind === "save" ? direct.facts : []), ...(plan?.facts ?? [])];
   const unresolvedEmailEdit = !update && editRequested
     && (hasEmailTopic(message) || findEmailAddresses(message).length > 0);
+  const editedPhone = update && isPhoneSubject(update.subject) && parsePhoneNumber(update.value);
+  const unresolvedPhoneEdit = !update && editRequested && findPhoneNumbers(message).length > 0
+    && !!getPhoneRecallSubject(reference?.question ?? "");
   for (const fact of proposedFacts) {
     const content = normalize(fact.content);
-    // The edit already accounts for its replacement value. A rejected email
-    // edit must not be converted into a second, conflicting email note.
+    // An edit already accounts for its replacement value. Failed edits should
+    // leave existing facts in place without creating a conflicting note.
     if ((update && content.includes(normalize(update.value)))
-      || (unresolvedEmailEdit && findEmailAddresses(fact.content).length > 0)) continue;
+      || (unresolvedEmailEdit && findEmailAddresses(fact.content).length > 0)
+      || (unresolvedPhoneEdit && isPhoneSubject(fact.title))
+      || (editedPhone && findPhoneNumbers(fact.content).some((number) =>
+        phoneNumberKey(number) === phoneNumberKey(editedPhone)))) continue;
     if (!facts.has(content)) facts.set(content, fact);
   }
 
@@ -398,7 +549,9 @@ async function rememberFacts(
         normalize(note.content) === normalize(fact.content)
         || (isEmailSubject(fact.title)
           ? emailFields(note, fact.title).length > 0
-          : hasSingleValue(title) && subjectName(note.title ?? "") === title));
+          : isPhoneSubject(fact.title)
+            ? phoneFields(note, fact.title).length > 0
+            : hasSingleValue(title) && subjectName(note.title ?? "") === title));
       if (matching || incomplete) {
         hasExisting = true;
         if (matching) existing.push(matching);

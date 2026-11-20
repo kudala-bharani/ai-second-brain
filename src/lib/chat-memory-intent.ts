@@ -15,6 +15,10 @@ const CLARIFY_EMAIL_REPLACEMENT: ChatMemoryIntent = {
   kind: "clarify",
   message: "What is the new email address? Include the full replacement address in your update.",
 };
+const CLARIFY_PHONE_REPLACEMENT: ChatMemoryIntent = {
+  kind: "clarify",
+  message: "What is the new phone number? Include one complete phone number in your update.",
+};
 
 const EMAIL = /[a-z\d.!#$%&'*+/=?^_{|}~-]+@[a-z\d](?:[a-z\d-]*[a-z\d])?(?:\.[a-z\d](?:[a-z\d-]*[a-z\d])?)+/gi;
 const EMAIL_TOPIC = /\be[ -]?mail\b/i;
@@ -26,10 +30,10 @@ const EDIT_END = /(?:\s*[,;]\s*|\s+)(?:and\s+)?(?:please\s+)?(?:update|change|ed
 const EMAIL_DECLARATION = /^(?:(?:this|here)\s+is\s+|here['’]s\s+)?((?:(?:my|the|this|that)\s+)?(?:(?:new|updated|current|correct(?:ed)?)\s+)?(?:(?:personal|work|school|primary|secondary)\s+)?(?:e[ -]?mail|emil)(?:\s+(?:address|id))?)(?:\s+is\s+|\s*[:=]\s*|\s+)([\s\S]+)$/i;
 const EMAIL_FIELD = "(?:(?:personal|work|school|primary|secondary)\\s+)?(?:e[ -]?mail|emil)(?:\\s+(?:address|id))?";
 const OWN_EMAIL_FIELD = "my\\s+" + EMAIL_FIELD;
-const EMAIL_CHANGE_VERB = "(?:changed|updated|switched|corrected)";
+const CONTACT_CHANGE_VERB = "(?:changed|updated|switched|corrected)";
 const EMAIL_CHANGE_DECLARATION = new RegExp(
-  "^(?:i(?:['’]ve)?\\s+(?:(?:have|just|recently)\\s+){0,2}" + EMAIL_CHANGE_VERB + "\\s+(" + OWN_EMAIL_FIELD + ")"
-    + "|(" + OWN_EMAIL_FIELD + ")\\s+(?:(?:has|been|just|recently)\\s+){0,3}" + EMAIL_CHANGE_VERB + ")\\b([\\s\\S]*)$",
+  "^(?:i(?:['’]ve)?\\s+(?:(?:have|just|recently)\\s+){0,2}" + CONTACT_CHANGE_VERB + "\\s+(" + OWN_EMAIL_FIELD + ")"
+    + "|(" + OWN_EMAIL_FIELD + ")\\s+(?:(?:has|been|just|recently)\\s+){0,3}" + CONTACT_CHANGE_VERB + ")\\b([\\s\\S]*)$",
   "i",
 );
 const EMAIL_RECALL = new RegExp(
@@ -38,6 +42,34 @@ const EMAIL_RECALL = new RegExp(
     + "(my\\s+(?:(?:current|saved|stored)\\s+)?" + EMAIL_FIELD + ")(?:\\s+please)?[.!?]*$",
   "i",
 );
+const PHONE_SCOPE = "(?:personal|home|work|office|school|primary|secondary)";
+const PHONE_SCOPE_WORD = new RegExp(String.raw`\b(${PHONE_SCOPE})\s+`, "i");
+const PHONE_FIELD = String.raw`(?:${PHONE_SCOPE}\s+)?(?:(?:phone|telephone|(?:mobile|cell)(?:[ -]?phone)?)(?:\s+(?:number|no\.?))?|contact\s+number)`;
+const PHONE_SUBJECT = new RegExp(String.raw`^(?:(?:my|the)\s+)?(?:(?:new|old|updated|current|correct(?:ed)?)\s+)?${PHONE_FIELD}(?:\s+(?:note|memory)|\s+in\s+(?:my|the)\s+(?:saved\s+)?(?:note|notes|memory|notebook))?$`, "i");
+const PHONE_RECALL = new RegExp(
+  String.raw`^(?:please\s+)?(?:what(?:['’]s|\s+is)\s+|(?:(?:can|could|would)\s+(?:you|u)\s+)?(?:tell|show|remind)\s+me\s+(?:of\s+)?)(my\s+(?:(?:current|saved|stored)\s+)?${PHONE_FIELD})(?:\s+please)?[.!?]*$`,
+  "i",
+);
+const PHONE_DECLARATION = new RegExp(
+  String.raw`^(?:(?:this|here)\s+is\s+|here['’]s\s+)?((?:(?:my|the|this|that)\s+)?(?:(?:new|updated|current|correct(?:ed)?)\s+)?${PHONE_FIELD})(?:\s+is\s+|\s*[:=]\s*|\s+)([\s\S]+)$`,
+  "i",
+);
+const PHONE_CHANGE_DECLARATION = new RegExp(
+  String.raw`^(?:i(?:['’]ve)?\s+(?:(?:have|just|recently)\s+){0,2}${CONTACT_CHANGE_VERB}\s+(my\s+${PHONE_FIELD})|(my\s+${PHONE_FIELD})\s+(?:(?:has|been|just|recently)\s+){0,3}${CONTACT_CHANGE_VERB})\b([\s\S]*)$`,
+  "i",
+);
+const NUMBER_REFERENCE = new RegExp(
+  String.raw`^(?:(?:my|the|this|that)\s+)?(?:(?:new|updated|current|correct(?:ed)?)\s+)?(?:(?:${PHONE_SCOPE}|mobile|cell)\s+)?number\b`,
+  "i",
+);
+const PHONE_SPACE = String.raw`[ \t\u00a0\u202f]`;
+const PHONE_GROUP = String.raw`(?:\d+|\(\d+\))`;
+const PHONE_PATTERN = String.raw`(?:\+${PHONE_SPACE}*)?${PHONE_GROUP}(?:(?:${PHONE_SPACE}*[-.\u2010\u2011\u2013]${PHONE_SPACE}*|${PHONE_SPACE}+|(?<=\))(?=\d)|(?<=\d)(?=\())${PHONE_GROUP})*`;
+const PHONE_LITERAL = new RegExp(`^${PHONE_PATTERN}$`);
+const PHONE_SPAN = new RegExp(String.raw`(?<![\p{L}\p{N}+])${PHONE_PATTERN}`, "gu");
+const PHONE_SUFFIX = new RegExp(String.raw`^(?:[\p{L}\p{N}]|${PHONE_SPACE}*(?:(?:ext(?:ension)?\.?|x|#)${PHONE_SPACE}*\d))`, "iu");
+const DATE_LITERAL = /^\d{4}[-.](?:0?[1-9]|1[0-2])[-.](?:0?[1-9]|[12]\d|3[01])$/;
+const MULTIPLE_NUMBER_GROUPS = /\d{6,}[^\d]+\d{6,}/;
 const EDIT_WRAPPER = /^(?:(?:my|the|this|that)\s+)?(?:memory|memroy|note|notebook)\s+to\s+/i;
 const UNNAMED_MEMORY = /^(?:(?:my|the|this|that)\s+)?(?:memory|memroy|note|notebook)$/i;
 const REPLACEMENT = /^([\s\S]+?)\s+(?:to|with|as)\s+([\s\S]+)$/i;
@@ -72,6 +104,40 @@ function emailSubject(text: string): string {
 export function getEmailRecallSubject(message: string): string | undefined {
   const field = message.trim().replace(CHAT_PREAMBLE, "").match(EMAIL_RECALL)?.[1];
   return field && hasEmailTopic(field) ? emailSubject(field) : undefined;
+}
+
+export function isPhoneSubject(subject: string): boolean {
+  return PHONE_SUBJECT.test(subject.trim());
+}
+
+function phoneSubject(field: string): string {
+  const qualifier = field.match(PHONE_SCOPE_WORD)?.[1].toLowerCase();
+  if (qualifier === "office") return "Work phone";
+  if (qualifier) return qualifier.charAt(0).toUpperCase() + qualifier.slice(1) + " phone";
+  return /\b(?:mobile|cell)(?:[ -]?phone)?\b/i.test(field) ? "Mobile phone" : "Phone number";
+}
+
+export function getPhoneRecallSubject(message: string): string | undefined {
+  const field = message.trim().replace(CHAT_PREAMBLE, "").match(PHONE_RECALL)?.[1];
+  return field ? phoneSubject(field) : undefined;
+}
+
+export function parsePhoneNumber(value: string): string | undefined {
+  const trimmed = value.trim().replace(/[,.!?;]+$/, "").trim();
+  const quoted = trimmed.match(/^(?:"(.*)"|“(.*)”|'(.*)'|‘(.*)’)$/);
+  const literal = (quoted ? quoted.slice(1).find((part) => part !== undefined) ?? "" : trimmed)
+    .trim().replace(/[,.!?;]+$/, "").trim();
+  if (!PHONE_LITERAL.test(literal) || DATE_LITERAL.test(literal) || MULTIPLE_NUMBER_GROUPS.test(literal)) {
+    return undefined;
+  }
+  const digits = literal.replace(/\D/g, "");
+  return digits.length >= 6 && digits.length <= 15 ? literal : undefined;
+}
+
+export function findPhoneNumbers(text: string): string[] {
+  return [...text.matchAll(PHONE_SPAN)]
+    .filter(({ 0: value, index }) => parsePhoneNumber(value) && !PHONE_SUFFIX.test(text.slice(index + value.length)))
+    .map(([value]) => value);
 }
 
 function trimValue(input: string): string {
@@ -118,7 +184,7 @@ function getExplicitEdit(message: string) {
 export function isDirectMemoryEditRequest(message: string): boolean {
   const current = message.trim();
   return canWriteFromMessage(current)
-    && (getExplicitEdit(current) !== null || declaredEmailCorrection(current) !== null);
+    && (getExplicitEdit(current) !== null || declaredEmailCorrection(current) !== null || declaredPhoneCorrection(current) !== null);
 }
 
 export function referencedEmailReplacementSubject(message: string): string | null {
@@ -192,6 +258,84 @@ function declaredEmailCorrection(message: string): ChatMemoryIntent | null {
     : CLARIFY_EMAIL_REPLACEMENT;
 }
 
+function compatiblePhoneSubject(subject: string, mentioned: string | undefined): string | undefined {
+  if (!mentioned || mentioned === "Phone number") return subject;
+  return subject === "Phone number" || subject === mentioned ? mentioned : undefined;
+}
+
+function phoneUpdate(subject: string | undefined, replacement: string, previous?: string): ChatMemoryIntent {
+  const value = parsePhoneNumber(replacement);
+  const previousValue = previous === undefined ? undefined : parsePhoneNumber(previous);
+  if (!subject || !value || (previous !== undefined && !previousValue)) return CLARIFY_PHONE_REPLACEMENT;
+  return { kind: "update", subject, value, ...(previousValue ? { previousValue } : {}) };
+}
+
+function declaredPhoneCorrection(message: string): ChatMemoryIntent | null {
+  if (message.endsWith("?")) return null;
+  const current = message.replace(CHAT_PREAMBLE, "");
+  const change = current.match(PHONE_CHANGE_DECLARATION);
+  const field = change?.[1] ?? change?.[2];
+  if (change && field) {
+    const subject = phoneSubject(field);
+    const tail = change[3].trim();
+    const transition = tail.match(/^from\s+(.+?)\s+to\s+(.+)$/i);
+    if (transition) return phoneUpdate(subject, transition[2], transition[1]);
+
+    const rest = tail.replace(/^[,;:.—–-]\s*/, "").replace(/^(?:(?:and|so)\s+)?(?:now\s+)?/i, "");
+    const direct = rest.match(/^(?:to\s+|it(?:['’]s|\s+is)\s+)(.+)$/i);
+    if (direct) return phoneUpdate(subject, direct[1]);
+    const declaration = rest.match(PHONE_DECLARATION);
+    if (declaration && /^my\s+/i.test(declaration[1])) {
+      return phoneUpdate(compatiblePhoneSubject(subject, phoneSubject(declaration[1])), declaration[2]);
+    }
+    return tail && !/^[.!]+$/.test(tail) ? null : CLARIFY_PHONE_REPLACEMENT;
+  }
+
+  const declaration = current.match(PHONE_DECLARATION);
+  if (!declaration || !/^my\s+/i.test(declaration[1])
+    || (!/^my\s+(?:new|updated|correct(?:ed)?)\s+/i.test(declaration[1]) && !/^now\s+/i.test(declaration[2]))) {
+    return null;
+  }
+  return phoneUpdate(phoneSubject(declaration[1]), declaration[2].replace(/^now\s+/i, ""));
+}
+
+function checkPhoneReplacement(
+  targetText: string,
+  replacement: string,
+  previousQuestion: string | undefined,
+): ChatMemoryIntent | null {
+  const target = trimSubject(targetText);
+  const prior = previousQuestion && getPhoneRecallSubject(previousQuestion);
+  const from = target.match(/^(.+?)\s+from\s+(.+)$/i);
+  const field = from?.[1] ?? target;
+  const namedPhone = isPhoneSubject(field) ? phoneSubject(field) : undefined;
+  const refersBack = UNNAMED_MEMORY.test(field) || PRONOUN_SUBJECT.test(field);
+  const explicit = replacement.match(PHONE_DECLARATION);
+  if (explicit && (refersBack || namedPhone)) {
+    const mentioned = phoneSubject(explicit[1]);
+    const subject = namedPhone ? compatiblePhoneSubject(namedPhone, mentioned)
+      : mentioned === "Phone number" ? prior || mentioned : mentioned;
+    return phoneUpdate(subject, explicit[2], from?.[2]);
+  }
+
+  const reference = replacement.match(NUMBER_REFERENCE);
+  if (reference && (refersBack || namedPhone)) {
+    const contextualSubject = namedPhone ?? prior;
+    if (!contextualSubject) return CLARIFY_UPDATE;
+    const value = replacement.slice(reference[0].length).trim().replace(/^(?:is\s+|[:=]\s*)/i, "");
+    return phoneUpdate(compatiblePhoneSubject(contextualSubject, phoneSubject(reference[0])), value, from?.[2]);
+  }
+
+  const bareTarget = !namedPhone && targetText.trim() === target && field.match(NUMBER_REFERENCE)?.[0] === field;
+  if (bareTarget) {
+    return prior ? phoneUpdate(compatiblePhoneSubject(prior, phoneSubject(field)), replacement, from?.[2]) : CLARIFY_UPDATE;
+  }
+  if (namedPhone || (prior && refersBack)) {
+    return phoneUpdate(namedPhone || prior || undefined, replacement, from?.[2]);
+  }
+  return null;
+}
+
 function checkDirectUpdate(edit: ReturnType<typeof getExplicitEdit>, previousQuestion: string | undefined): ChatMemoryIntent | null {
   if (!edit) return null;
   const { verb, statement } = edit;
@@ -202,6 +346,8 @@ function checkDirectUpdate(edit: ReturnType<typeof getExplicitEdit>, previousQue
       ? { kind: "update", subject: emailSubject(declaration[1]), value }
       : CLARIFY_UPDATE;
   }
+  const phoneDeclaration = !verb && statement.match(PHONE_DECLARATION);
+  if (phoneDeclaration) return phoneUpdate(phoneSubject(phoneDeclaration[1]), phoneDeclaration[2]);
   if (verb === "replace") {
     const findReplace = statement.match(/^["“']([^"”']+)["”']\s+with\s+["“']([^"”']+)["”']\s+in\s+(.+)$/i)
       ?? statement.match(/^(.+?)\s+with\s+(.+?)\s+in\s+((?:the\s+)?(?:note|memory)\s+(?:titled|named|called)\s+.+)$/i);
@@ -213,6 +359,7 @@ function checkDirectUpdate(edit: ReturnType<typeof getExplicitEdit>, previousQue
         if (isEmailSubject(subject) && (!literalEmail(previousValue) || !literalEmail(value))) {
           return CLARIFY_UPDATE;
         }
+        if (isPhoneSubject(subject)) return phoneUpdate(phoneSubject(subject), value, previousValue);
         return { kind: "update", subject, previousValue, value };
       }
     }
@@ -233,9 +380,16 @@ function checkDirectUpdate(edit: ReturnType<typeof getExplicitEdit>, previousQue
       value,
     };
   }
+  if (replacement) {
+    const phone = checkPhoneReplacement(replacement[1], replacement[2], previousQuestion);
+    if (phone) return phone;
+  }
   const from = subjectText.match(/^(.+?)\s+from\s+(.+)$/i);
   const previousEmail = from && isEmailSubject(from[1]) ? literalEmail(from[2]) : literalEmail(subjectText);
   const assignment = replacement ? null : statement.match(/^(.+?)(?:\s+is\s+|\s*[:=]\s*)(.+)$/i);
+  if (assignment && isPhoneSubject(trimSubject(assignment[1]))) {
+    return phoneUpdate(phoneSubject(assignment[1]), assignment[2]);
+  }
   const assignedEmail = assignment && isEmailSubject(trimSubject(assignment[1])) ? literalEmail(assignment[2]) : undefined;
   const emailEdit = isEmailSubject(subjectText) || !!previousEmail || !!assignedEmail ||
     (isPriorEmail && (PRONOUN_SUBJECT.test(subjectText) || !subjectText));
@@ -332,7 +486,8 @@ export function getDirectChatMemoryIntent(
   if (!canWriteFromMessage(current)) return NO_INTENT;
 
   const context = previousQuestion && canWriteFromMessage(previousQuestion) ? previousQuestion.slice(0, 500) : undefined;
-  const directUpdate = checkDirectUpdate(getExplicitEdit(current), context) ?? declaredEmailCorrection(current);
+  const directUpdate = checkDirectUpdate(getExplicitEdit(current), context)
+    ?? declaredEmailCorrection(current) ?? declaredPhoneCorrection(current);
   if (directUpdate) return directUpdate;
 
   const content = current.replace(CHAT_PREAMBLE, "");
