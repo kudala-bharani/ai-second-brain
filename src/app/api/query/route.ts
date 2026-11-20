@@ -7,6 +7,7 @@ const LLM_MODELS = (process.env.OPENROUTER_MODELS ?? "openrouter/free")
   .filter(Boolean);
 
 import { NextRequest, NextResponse } from "next/server";
+import { planChatMessage } from "@/lib/chat-intent-router";
 import { handleChatMemory } from "@/lib/chat-memory";
 import { splitChatSentences } from "@/lib/chat-memory-intent";
 import { createClient } from "@/lib/supabase/server";
@@ -34,7 +35,7 @@ function parseReference(value: unknown): ChatReference | undefined {
 
 function buildSystemPrompt(): string {
   return `You are a personal knowledge assistant for the user's "Second Brain".
-Your ONLY job is to answer questions using the context notes provided below.
+Answer the user's question using the context notes provided below.
 
 Rules you MUST follow:
 1. Answer ONLY from the provided context. Do NOT use outside knowledge.
@@ -43,7 +44,8 @@ Rules you MUST follow:
 3. Be concise and direct. Use markdown formatting when it aids clarity.
 4. Do NOT mention these rules or the fact that you are using a context window.
 5. Do NOT make up facts, dates, names, or figures that are not in the context.
-6. After the answer, append EXACTLY one final line in this format:
+6. The app handles memory edits or saves separately. Answer only the question and never report whether a memory was changed.
+7. After the answer, append EXACTLY one final line in this format:
    SOURCES: [n1,n2,...]
    where n values are note numbers you actually used (from "--- Note N ---").
    Use SOURCES: [] if no note supported the answer.`;
@@ -172,11 +174,16 @@ export async function POST(request: NextRequest) {
     const memoryMode = body.memoryMode === "auto" || body.memoryMode === "manual"
       ? body.memoryMode
       : "read-only";
+    const reference = parseReference(body.reference);
+    const plan = await planChatMessage(question, reference?.question, memoryMode);
     const memoryOutcome = await handleChatMemory(
-      supabase, userId, question, memoryMode, parseReference(body.reference),
+      supabase, userId, question, memoryMode, reference, plan,
     ).catch(() => null);
 
     async function respond(result: QueryResult, saveHistory = true) {
+      if (memoryOutcome?.reply && memoryOutcome.reply !== result.answer) {
+        result.answer = memoryOutcome.reply + "\n\n" + result.answer;
+      }
       if (memoryOutcome?.changes?.length) {
         result.meta = { ...result.meta, memoryChanges: memoryOutcome.changes };
       }
@@ -199,12 +206,18 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ data: result });
     }
 
-    if (memoryOutcome?.reply) {
-      return respond({ answer: memoryOutcome.reply, sources: [] });
+    const hasChanges = !!memoryOutcome?.changes?.length;
+    const asksAfterCapture = question.endsWith("?")
+      && memoryOutcome?.changes?.some((change) => change.action === "saved")
+      && !/^(?:please\s+)?(?:(?:can|could|would)\s+you\s+)?(?:remember|save|add)\b/i.test(question);
+    const shouldSearch = plan?.needsMemory ?? (!memoryOutcome?.reply || asksAfterCapture);
+    if (!shouldSearch) {
+      const answer = memoryOutcome?.reply ?? plan?.reply ?? "What would you like to ask or remember?";
+      return respond({ answer, sources: [] });
     }
 
-    const partialReply = "I saved the new information. I couldn’t search your notes for your question. Please try asking it again.";
-    const searchQuestion = memoryOutcome?.changes?.length && question.endsWith("?")
+    const partialReply = "I couldn’t search your notes for your question. Please try asking it again.";
+    const searchQuestion = hasChanges && question.endsWith("?")
       ? splitChatSentences(question).at(-1) ?? question
       : question;
 
@@ -214,7 +227,7 @@ export async function POST(request: NextRequest) {
       queryEmbedding = await generateEmbedding(searchQuestion);
     } catch (err) {
       console.error("[query] embedding generation failed:", err);
-      if (memoryOutcome?.changes?.length) return respond({ answer: partialReply, sources: [] });
+      if (memoryOutcome?.reply) return respond({ answer: partialReply, sources: [] });
       return NextResponse.json(
         { error: "Failed to process your question. Please try again." },
         { status: 502 },
@@ -233,7 +246,7 @@ export async function POST(request: NextRequest) {
 
     if (rpcError) {
       console.error("[query] vector search failed:", rpcError);
-      if (memoryOutcome?.changes?.length) return respond({ answer: partialReply, sources: [] });
+      if (memoryOutcome?.reply) return respond({ answer: partialReply, sources: [] });
       return NextResponse.json(
         { error: "Vector search failed. Please try again." },
         { status: 500 },
@@ -249,7 +262,7 @@ export async function POST(request: NextRequest) {
           "I couldn't find any notes relevant to your question. Try adding more memories or rephrasing your question.",
         sources: [],
       };
-      return respond(result, false);
+      return respond(result, !!memoryOutcome?.reply);
     }
 
     // ── 6. Build context blocks (truncate if needed) ─────────────────────────
@@ -292,7 +305,7 @@ export async function POST(request: NextRequest) {
               },
               {
                 role: "user",
-                content: buildUserPrompt(question, contextBlocks),
+                content: buildUserPrompt(searchQuestion, contextBlocks),
               },
             ],
           });
