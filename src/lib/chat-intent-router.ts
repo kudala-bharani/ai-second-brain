@@ -4,9 +4,11 @@ import type { ChatCompletionCreateParamsNonStreaming } from "openai/resources/ch
 import {
   canWriteFromMessage,
   findEmailAddresses,
+  findPhoneNumbers,
   hasEmailTopic,
   isDirectMemoryEditRequest,
   isEmailSubject,
+  isPhoneSubject,
   splitChatSentences,
 } from "@/lib/chat-memory-intent";
 import { openai } from "@/lib/openai";
@@ -118,7 +120,7 @@ function hasDirectCue(message: string, pattern: RegExp, directive?: string): boo
   return false;
 }
 
-function hasExplicitEmailPair(message: string, value: string, previousValue: string): boolean {
+function hasExplicitReplacementPair(message: string, value: string, previousValue: string): boolean {
   const replacementAt = message.lastIndexOf(value);
   const previousAt = message.lastIndexOf(previousValue);
   if (previousAt < replacementAt) {
@@ -163,13 +165,14 @@ function parseUpdate(
   const previousValue = shortText(candidate?.previousValue, 1500);
   if (previousValue && (!message.includes(previousValue) || previousValue === value)) return undefined;
 
-  if (isEmailSubject(subject)) {
-    const addresses = findEmailAddresses(message);
+  const contactValues = isEmailSubject(subject) ? findEmailAddresses(message)
+    : isPhoneSubject(subject) ? [...new Set(findPhoneNumbers(message))] : undefined;
+  if (contactValues) {
     const precedingText = message.slice(0, message.lastIndexOf(value));
-    if (!addresses.includes(value)
-      || (previousValue && !addresses.includes(previousValue))
-      || (addresses.length > 1 && (!previousValue
-        || addresses.length !== 2 || !hasExplicitEmailPair(message, value, previousValue)))
+    if (!contactValues.includes(value)
+      || (previousValue && !contactValues.includes(previousValue))
+      || (contactValues.length > 1 && (!previousValue
+        || contactValues.length !== 2 || !hasExplicitReplacementPair(message, value, previousValue)))
       || /\b(?:from|replace|swap|substitute)\s*["“'‘]?$/i.test(precedingText)) return undefined;
   }
 

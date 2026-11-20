@@ -8,12 +8,14 @@ const LLM_MODELS = (process.env.OPENROUTER_MODELS ?? "openrouter/free")
 
 import { NextRequest, NextResponse } from "next/server";
 import { planChatMessage } from "@/lib/chat-intent-router";
-import { handleChatMemory, lookupSavedEmail } from "@/lib/chat-memory";
+import { handleChatMemory, lookupSavedEmail, lookupSavedPhone } from "@/lib/chat-memory";
 import {
   getDirectChatMemoryIntent,
   getEmailRecallSubject,
+  getPhoneRecallSubject,
   isDirectMemoryEditRequest,
   isEmailSubject,
+  isPhoneSubject,
   splitChatSentences,
 } from "@/lib/chat-memory-intent";
 import { createClient } from "@/lib/supabase/server";
@@ -187,10 +189,12 @@ export async function POST(request: NextRequest) {
       : "read-only";
     const reference = parseReference(body.reference);
     const directEmailRecall = getEmailRecallSubject(question);
+    const directPhoneRecall = getPhoneRecallSubject(question);
     const directIntent = getDirectChatMemoryIntent(question, reference?.question, memoryMode === "auto");
-    const directEmailEdit = directIntent.kind === "update" && isEmailSubject(directIntent.subject);
-    // A complete email correction and a direct email lookup can run locally.
-    const plan = directEmailRecall || directEmailEdit
+    const directContactEdit = directIntent.kind === "update"
+      && (isEmailSubject(directIntent.subject) || isPhoneSubject(directIntent.subject));
+    // A complete contact correction and a direct lookup can run locally.
+    const plan = directEmailRecall || directPhoneRecall || directContactEdit
       ? null
       : await planChatMessage(question, reference?.question, memoryMode);
     const memoryOutcome = await handleChatMemory(
@@ -244,13 +248,17 @@ export async function POST(request: NextRequest) {
 
     const partialReply = "I couldn’t search your notes for your question. Please try asking it again.";
     const emailRecall = directEmailRecall ?? getEmailRecallSubject(searchQuestion);
-    if (emailRecall) {
-      try {
-        return respond(await lookupSavedEmail(supabase, userId, emailRecall));
-      } catch {
-        if (actionReply) return respond({ answer: partialReply, sources: [] });
-        return NextResponse.json({ error: "I couldn’t read your saved email. Please try again." }, { status: 500 });
+    const phoneRecall = directPhoneRecall ?? getPhoneRecallSubject(searchQuestion);
+    try {
+      if (emailRecall) return respond(await lookupSavedEmail(supabase, userId, emailRecall));
+      if (phoneRecall) {
+        const result = await lookupSavedPhone(supabase, userId, phoneRecall);
+        if (result) return respond(result);
       }
+    } catch {
+      if (actionReply) return respond({ answer: partialReply, sources: [] });
+      const field = emailRecall ? "email" : "phone number";
+      return NextResponse.json({ error: `I couldn’t read your saved ${field}. Please try again.` }, { status: 500 });
     }
 
     // ── 3. Generate embedding for the question ───────────────────────────────
