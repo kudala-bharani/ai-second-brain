@@ -16,7 +16,7 @@ import {
   updateMemory,
   type MemoryClient,
 } from "@/lib/memory-store";
-import type { ChatMemoryChange, ChatMemoryMode, ChatReference, Memory } from "@/types";
+import type { ChatMemoryChange, ChatMemoryMode, ChatReference, Memory, QueryResult } from "@/types";
 
 type UpdateIntent = Extract<ChatMemoryIntent, { kind: "update" }>;
 type Fact = Extract<ChatMemoryIntent, { kind: "save" }>["facts"][number];
@@ -59,7 +59,7 @@ function emailScope(subject: string): string | null {
 }
 
 function isEmailField(subject: string): boolean {
-  return /^(?:(?:my|primary|secondary|school|work|business|office|personal|home)\s+){0,2}e-?mail(?:\s+(?:id|address))?$/i
+  return /^(?:(?:my|primary|secondary|school|work|business|office|personal|home)\s+){0,2}e[ -]?mail(?:\s+(?:id|address))?$/i
     .test(normalize(subject));
 }
 
@@ -68,7 +68,7 @@ function emailFields(memory: Memory, subject: string): string[] {
   const title = memory.title ?? "";
   const titleMatches = isEmailField(title) && (!scope || emailScope(title) === scope);
   const matchingLines = memory.content.split("\n").filter((line) => {
-    const label = /^\s*(?:[-*]\s+)?((?:(?:my|primary|secondary|school|work|business|office|personal|home)\s+){0,2}e-?mail(?:\s+(?:id|address))?)\s*(?:is\b|[:=])/i
+    const label = /^\s*(?:[-*]\s+)?((?:(?:my|primary|secondary|school|work|business|office|personal|home)\s+){0,2}e[ -]?mail(?:\s+(?:id|address))?)\s*(?:is\b|[:=])/i
       .exec(line)?.[1];
     return label && (!scope || emailScope(label) === scope);
   });
@@ -150,11 +150,11 @@ async function findCandidates(
 ) {
   const owned = () => client.from("memories").select(MEMORY_COLUMNS).eq("user_id", userId);
   const email = isEmailSubject(subject);
-  const exact = escapePattern(subjectName(subject));
+  const titleText = email && !emailScope(subject) ? "mail" : escapePattern(subjectName(subject));
   // PostgREST receives each filter independently. Check matches in the returned rows
   // before using any of them for a write.
   const lookups = [
-    owned().ilike("title", "%" + exact + "%").limit(MAX_CANDIDATES),
+    owned().ilike("title", "%" + titleText + "%").limit(MAX_CANDIDATES),
     email || text
       ? owned().ilike("content", email ? "%@%" : "%" + escapePattern(text) + "%").limit(MAX_CANDIDATES)
       : null,
@@ -172,6 +172,45 @@ async function findCandidates(
     }
   }
   return { notes: Array.from(notes.values()), incomplete };
+}
+
+export async function lookupSavedEmail(
+  client: MemoryClient,
+  userId: string,
+  subject: string,
+): Promise<QueryResult> {
+  const scope = emailScope(subject);
+  const field = scope ? `${scope} email address` : "email address";
+  const { notes, incomplete } = await findCandidates(client, userId, subject, "");
+
+  const matches = new Map<string, { address: string; note: Memory }>();
+  for (const note of notes) {
+    for (const address of emailFields(note, subject)) {
+      const key = normalize(address);
+      if (!matches.has(key) || subjectName(note.title ?? "") === subjectName(subject)) {
+        matches.set(key, { address, note });
+      }
+    }
+  }
+
+  if (matches.size > 1 || incomplete) {
+    const titles = [...new Set([...matches.values()].map(({ note }) => note.title).filter(Boolean))].slice(0, 4);
+    const locations = titles.length ? ` Check ${titles.map((title) => `“${title}”`).join(", ")}.` : "";
+    return {
+      answer: `I couldn’t identify a single saved ${field}.${locations} Ask for a specific email label, such as work or personal email.`,
+      sources: [],
+    };
+  }
+
+  const match = matches.values().next().value;
+  if (!match) return { answer: `I couldn’t find a saved ${field} in your notes.`, sources: [] };
+
+  const { address, note } = match;
+  return {
+    answer: `Your saved ${field} is \`${address}\`.`,
+    sources: [{ ...note, similarity: 1, evidence_snippet: address, evidence_terms: [address] }],
+    meta: { retrievalCount: 1 },
+  };
 }
 
 function changed(action: ChatMemoryChange["action"], memories: Memory[]): ChatMemoryOutcome {

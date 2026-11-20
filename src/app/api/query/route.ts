@@ -8,8 +8,14 @@ const LLM_MODELS = (process.env.OPENROUTER_MODELS ?? "openrouter/free")
 
 import { NextRequest, NextResponse } from "next/server";
 import { planChatMessage } from "@/lib/chat-intent-router";
-import { handleChatMemory } from "@/lib/chat-memory";
-import { isDirectMemoryEditRequest, splitChatSentences } from "@/lib/chat-memory-intent";
+import { handleChatMemory, lookupSavedEmail } from "@/lib/chat-memory";
+import {
+  getDirectChatMemoryIntent,
+  getEmailRecallSubject,
+  isDirectMemoryEditRequest,
+  isEmailSubject,
+  splitChatSentences,
+} from "@/lib/chat-memory-intent";
 import { createClient } from "@/lib/supabase/server";
 import { generateEmbedding } from "@/lib/embeddings";
 import { openai } from "@/lib/openai";
@@ -180,7 +186,13 @@ export async function POST(request: NextRequest) {
       ? body.memoryMode
       : "read-only";
     const reference = parseReference(body.reference);
-    const plan = await planChatMessage(question, reference?.question, memoryMode);
+    const directEmailRecall = getEmailRecallSubject(question);
+    const directIntent = getDirectChatMemoryIntent(question, reference?.question, memoryMode === "auto");
+    const directEmailEdit = directIntent.kind === "update" && isEmailSubject(directIntent.subject);
+    // A complete email correction and a direct email lookup can run locally.
+    const plan = directEmailRecall || directEmailEdit
+      ? null
+      : await planChatMessage(question, reference?.question, memoryMode);
     const memoryOutcome = await handleChatMemory(
       supabase, userId, question, memoryMode, reference, plan,
     ).catch(() => null);
@@ -231,6 +243,15 @@ export async function POST(request: NextRequest) {
     }
 
     const partialReply = "I couldn’t search your notes for your question. Please try asking it again.";
+    const emailRecall = directEmailRecall ?? getEmailRecallSubject(searchQuestion);
+    if (emailRecall) {
+      try {
+        return respond(await lookupSavedEmail(supabase, userId, emailRecall));
+      } catch {
+        if (actionReply) return respond({ answer: partialReply, sources: [] });
+        return NextResponse.json({ error: "I couldn’t read your saved email. Please try again." }, { status: 500 });
+      }
+    }
 
     // ── 3. Generate embedding for the question ───────────────────────────────
     let queryEmbedding: number[];
