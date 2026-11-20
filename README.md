@@ -1,6 +1,6 @@
 # 🧠 AI Second Brain
 
-> 🚀 A production-ready RAG-based AI system that enables users to store, retrieve, and query personal knowledge using semantic search and LLMs.
+An AI notebook for remembering personal facts, searching saved notes, and checking the evidence behind an answer. Chat updates a note in place and links to the saved change.
 
 🔗 **Live Demo:** https://ai-second-brain-beige.vercel.app/
 
@@ -21,30 +21,34 @@
 | 📝 **Add + Edit Memories**  | Create, update, and delete memories with automatic re-embedding              |
 | 🏷️ **Tagging**              | Add tags to memories and filter your notes by tag/search                     |
 | 🔍 **Vector Search**        | Semantic retrieval using local BGE embeddings + pgvector cosine similarity |
-| 🤖 **RAG Q&A**              | Ask questions and get answers constrained to your stored notes               |
+| 🤖 **RAG Q&A**              | Ask questions and get excerpts verified against your stored notes           |
+| 💬 **Chat Memory**          | Save facts or correct a stored value from chat and open the updated note     |
 | 📌 **Source Evidence**      | Answers include source notes and evidence snippets with term highlighting    |
-| 🕘 **Question History**     | Recent queries are saved locally with one-click rerun                        |
+| 🕘 **Question History**     | Reopen saved answers or rerun a question in read-only mode                   |
 | 👤 **Multi-user Isolation** | RLS policies ensure each user only accesses their own memories               |
-| 🛡️ **Provider Resilience**  | OpenRouter model fallback + graceful provider-down response behavior         |
+| 🛡️ **Provider Resilience**  | Contact updates and exact recall work during a model outage                  |
 
 ---
 
 ## 🏗️ Architecture
 
-```text
-User -> Next.js Frontend (React)
-          |
-          +-- POST /api/memories
-          |      -> Local BGE embedding (BAAI/bge-small-en-v1.5)
-          |      -> Supabase insert/update (content + tags + vector)
-          |
-          +-- POST /api/query
-                 -> Question embedding (local BGE)
-                 -> Supabase RPC: match_memories
-                 -> Prompt assembly with retrieved notes
-                 -> OpenRouter LLM completion (fallback model order)
-                 -> Answer + cited sources + evidence snippets
+```mermaid
+flowchart LR
+    Chat[Chat message] --> Intent[Parse contact facts or validate a model plan]
+    Intent --> Write[Apply an owned row change]
+    Write --> Receipt[Verify the returned row and issue a receipt]
+    Intent --> Read[Resolve a separate question]
+    Read --> Exact[Read a labeled contact value]
+    Read --> Retrieve[Retrieve with local BGE and pgvector or keywords]
+    Retrieve --> Select[Model selects exact excerpts]
+    Select --> Check[Verify excerpts against the supplied sources]
+    Check --> Reply[Server assembles the reply and source links]
+    Exact --> Reply
+    Receipt --> Reply
+    Reply --> History[Save answer and receipts to account history]
 ```
+
+The API can answer a question and apply a separate update in the same turn. Existing note edits use an optimistic database check so a chat request cannot overwrite an intervening manual edit. When OpenRouter is unavailable, general questions show matching source notes and exact contact operations use the notebook directly.
 
 ### Tech Stack
 
@@ -144,35 +148,25 @@ Open [http://localhost:3000](http://localhost:3000)
 
 ---
 
-## 🔁 RAG Flow (Current)
+## Try the chat workflow
 
-### Adding/Editing a Memory
+1. Add a note with `Phone: 2025550101` in the body. The title can be blank.
+2. Ask “What is my phone number?” and open the source from the answer.
+3. Send `I changed to a new number, this is my current number "2025550102"`. Open the receipt to inspect the edited note.
+4. Start a new chat and ask the same question. The answer comes from the saved value.
 
-```text
-1. User enters title/content/tags
-2. API embeds title+content with the local BGE model
-3. API writes memory + embedding + tags to Supabase
-4. UI refreshes memory list
-```
+## Regression tests
 
-### Asking a Question
+Run `npm test` to exercise the chat pipeline with synthetic notebook records and controlled provider and database responses. The suite checks persistent corrections, idempotent retries, conflicts, provider failures, fabricated confirmations, and automatic capture.
 
-```text
-1. User submits question
-2. API embeds the question
-3. Supabase RPC returns top semantic matches
-4. API builds grounded prompt from matched notes
-5. OpenRouter generates answer (with fallback model order)
-6. API returns answer + related source notes + evidence snippets
-```
 
 ---
 
 ## ⚙️ Configuration Notes
 
 - Embeddings use the existing **384-dimensional BGE model** locally, with CLS pooling and L2 normalization. The checked-in [ONNX export](https://huggingface.co/Xenova/bge-small-en-v1.5/tree/ea104dacec62c0de699686887e3f920caeb4f3e3) is pinned to that model.
-- Query history/settings are currently stored in browser localStorage.
-- Free model availability can vary; fallback behavior is built in.
+- Each saved answer, source citation, and memory receipt lives in `query_history` under the signed-in account.
+- Set `OPENROUTER_MODELS` to a comma-separated list of preferred models that support structured output. The free router is available as a fallback.
 
 ---
 
@@ -185,7 +179,8 @@ Open [http://localhost:3000](http://localhost:3000)
 | `POST /api/memories`       | Create memory (title/content/tags)        |
 | `PATCH /api/memories/:id`  | Edit memory + re-embed                    |
 | `DELETE /api/memories/:id` | Delete memory                             |
-| `POST /api/query`          | Ask grounded question                     |
+| `POST /api/query`          | Ask a grounded question or change a memory from chat |
+| `GET /api/query-history`  | List answers saved to the signed-in account |
 
 ---
 

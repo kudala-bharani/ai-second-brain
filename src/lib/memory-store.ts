@@ -25,10 +25,14 @@ export class MemoryStoreError extends Error {
   }
 }
 
-async function embedMemory({ title, content }: MemoryDraft) {
+async function embedMemory({ title, content }: MemoryDraft, allowUnindexed = false) {
   try {
     return JSON.stringify(await generateEmbedding(title ? `${title}\n\n${content}` : content));
   } catch (error) {
+    if (allowUnindexed) {
+      console.warn("[memory-store] saving without an embedding");
+      return null;
+    }
     throw new MemoryStoreError("embedding", error);
   }
 }
@@ -44,7 +48,7 @@ export async function createMemory(
   client: MemoryClient,
   userId: string,
   draft: MemoryDraft,
-  options?: { id?: string },
+  options?: { id?: string; allowUnindexed?: boolean },
 ): Promise<Memory | null> {
   const { data, error } = await client
     .from("memories")
@@ -52,7 +56,7 @@ export async function createMemory(
       ...draft,
       ...(options?.id ? { id: options.id } : {}),
       user_id: userId,
-      embedding: await embedMemory(draft),
+      embedding: await embedMemory(draft, options?.allowUnindexed),
     })
     .select(MEMORY_COLUMNS)
     .single();
@@ -77,7 +81,8 @@ export async function updateMemory(
       content,
       // A chat edit only changes the text. Preserve any concurrent tag edit.
       ...(expected ? {} : { tags }),
-      embedding: await embedMemory(draft),
+      // An optimistic chat edit can be retrieved by text until it is indexed again.
+      embedding: await embedMemory(draft, !!expected),
     })
     .eq("id", id)
     .eq("user_id", userId);

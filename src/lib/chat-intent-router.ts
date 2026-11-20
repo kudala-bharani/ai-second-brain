@@ -248,12 +248,13 @@ export async function planChatMessage(
   message: string,
   previousQuestion: string | undefined,
   mode: ChatMemoryMode,
+  model = "openrouter/free",
 ): Promise<ChatMessagePlan | null> {
   const context = previousQuestion && canWriteFromMessage(previousQuestion)
     ? previousQuestion.slice(0, 500)
     : undefined;
   const request: ChatCompletionCreateParamsNonStreaming & { provider: { require_parameters: boolean } } = {
-    model: "openrouter/free",
+    model,
     provider: { require_parameters: true },
     temperature: 0,
     max_tokens: 750,
