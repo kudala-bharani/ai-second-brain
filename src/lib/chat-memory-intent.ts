@@ -19,6 +19,8 @@ const EMAIL_TOPIC = /\be-?mail(?:\s+(?:address|id))?\b/i;
 const EMAIL_SUBJECT = /^(?:(?:my|the)\s+)?(?:(?:personal|work|school|primary|secondary|new|old)\s+)?e-?mail(?:\s+(?:address|id))?(?:\s+(?:note|memory)|\s+in\s+(?:my|the)\s+(?:saved\s+)?(?:note|notes|memory|notebook))?$/i;
 const EDIT_START = /^(?:please\s+)?(?:(?:can|could|would|will)\s+you\s+|i\s+want\s+you\s+to\s+)?(?:please\s+)?(change|update|replace|set|edit|correct|revise|modify)\s+/i;
 const EDIT_END = /(?:\s*[,;]\s*|\s+)(?:and\s+)?(?:please\s+)?(?:update|change|edit|correct)(?:\s+(?:it|that)|\s+(?:my|the|this|that)\s+(?:memory|note))(?:\s+in\s+(?:my|the)\s+notebook)?[.!?]*$/i;
+const EDIT_WRAPPER = /^(?:(?:my|the|this|that)\s+)?(?:memory|memroy|note|notebook)\s+to\s+/i;
+const REPLACEMENT = /^([\s\S]+?)\s+(?:to|with|as)\s+([\s\S]+)$/i;
 const REPLACEMENT_START = /(?:\b(?:to|with|as|is|should be)\s+["“‘']?|[:=]\s*["“‘']?)$/i;
 const REPLACEMENT_CANDIDATE = /\b(?:to|with|as|is|should be)\s+\S|[:=]\s*\S/i;
 const REMEMBER_START = /^(?:please\s+)?(?:(?:can|could|would)\s+you\s+)?(?:please\s+)?(?:remember\s+(?:that\s+|to\s+|(?=i(?:'m| am|\s)|my\s))|(?:remember|save\s+this|add\s+to\s+memory)\s*[:–—]\s*)/i;
@@ -57,14 +59,48 @@ function previousField(question: string | undefined): string {
   return match?.[1].trim() ?? "";
 }
 
-function checkDirectUpdate(message: string, previousQuestion: string | undefined): ChatMemoryIntent | null {
+function canWriteFromMessage(message: string): boolean {
+  return !!message && !QUOTED_OR_PASTED.test(message) && !NO_SAVE.test(message)
+    && !NOT_A_FACT.test(message) && !SECRET.test(message);
+}
+
+function getExplicitEdit(message: string) {
   const prefix = message.match(EDIT_START);
   const suffix = message.match(EDIT_END);
   if (!prefix && !suffix) return null;
 
   // A trailing instruction can qualify a statement such as "My email is x, update the memory."
   const statement = message.slice(prefix?.[0].length ?? 0, suffix?.index ?? message.length);
-  if (prefix?.[1].toLowerCase() === "replace") {
+  const wrapper = prefix && statement.match(EDIT_WRAPPER);
+  if (wrapper) {
+    const wrapped = statement.slice(wrapper[0].length);
+    const command = wrapped.match(EDIT_START);
+    if (command) return { verb: command[1].toLowerCase(), statement: wrapped.slice(command[0].length) };
+  }
+  return { verb: prefix?.[1].toLowerCase(), statement };
+}
+
+export function referencedEmailReplacementSubject(message: string): string | null {
+  const current = message.trim();
+  if (!canWriteFromMessage(current)) return null;
+  const edit = getExplicitEdit(current);
+  if (!edit?.verb) return null;
+  const replacement = edit.statement.match(REPLACEMENT);
+  if (!replacement || !isEmailSubject(trimSubject(replacement[1]))) return null;
+  if (!/^(?:(?:this|that|the)\s+(?:new\s+)?(?:one|e-?mail(?:\s+(?:address|id))?|address)|the\s+(?:one|e-?mail(?:\s+(?:address|id))?|address)\s+i\s+(?:just\s+)?(?:gave|sent|mentioned)(?:\s+you)?)$/i
+    .test(trimValue(replacement[2]))) return null;
+  return emailSubject(replacement[1]);
+}
+
+function literalEmail(value: string): string | undefined {
+  const text = trimValue(value);
+  return findEmailAddresses(text).find((address) => address === text);
+}
+
+function checkDirectUpdate(edit: ReturnType<typeof getExplicitEdit>, previousQuestion: string | undefined): ChatMemoryIntent | null {
+  if (!edit) return null;
+  const { verb, statement } = edit;
+  if (verb === "replace") {
     const findReplace = statement.match(/^["“']([^"”']+)["”']\s+with\s+["“']([^"”']+)["”']\s+in\s+(.+)$/i)
       ?? statement.match(/^(.+?)\s+with\s+(.+?)\s+in\s+((?:the\s+)?(?:note|memory)\s+(?:titled|named|called)\s+.+)$/i);
     if (findReplace) {
@@ -76,23 +112,26 @@ function checkDirectUpdate(message: string, previousQuestion: string | undefined
       }
     }
   }
-  const replacement = statement.match(/^([\s\S]+?)\s+(?:to|with|as)\s+([\s\S]+)$/i);
-  const addresses = findEmailAddresses(statement);
+  const replacement = statement.match(REPLACEMENT);
   const subjectText = trimSubject(replacement?.[1] ?? "");
   const isPriorEmail = !!previousQuestion && EMAIL_TOPIC.test(previousQuestion);
-  const firstPartIsAddress = findEmailAddresses(subjectText).length === 1;
-  const emailEdit = isEmailSubject(subjectText) || firstPartIsAddress ||
-    (EMAIL_TOPIC.test(statement) && !replacement) ||
+  const from = subjectText.match(/^(.+?)\s+from\s+(.+)$/i);
+  const previousEmail = from && isEmailSubject(from[1]) ? literalEmail(from[2]) : literalEmail(subjectText);
+  const assignment = replacement ? null : statement.match(/^(.+?)(?:\s+is\s+|\s*[:=]\s*)(.+)$/i);
+  const assignedEmail = assignment && isEmailSubject(trimSubject(assignment[1])) ? literalEmail(assignment[2]) : undefined;
+  const emailEdit = isEmailSubject(subjectText) || !!previousEmail || !!assignedEmail ||
     (isPriorEmail && (PRONOUN_SUBJECT.test(subjectText) || !subjectText));
 
-  if (emailEdit && addresses.length === 1) {
-    const topic = isEmailSubject(subjectText) || EMAIL_TOPIC.test(statement) ? statement : previousQuestion ?? "";
-    return { kind: "update", subject: emailSubject(topic), value: addresses[0] };
-  }
-
-  if (emailEdit && firstPartIsAddress && addresses.length === 2) {
-    const topic = EMAIL_TOPIC.test(statement) ? statement : previousQuestion ?? statement;
-    return { kind: "update", subject: emailSubject(topic), previousValue: addresses[0], value: addresses[1] };
+  if (emailEdit) {
+    const value = replacement ? literalEmail(replacement[2]) : assignedEmail;
+    if (!value) return CLARIFY_UPDATE;
+    const topic = from?.[1] || (isEmailSubject(subjectText) ? subjectText : assignment?.[1] || previousQuestion || statement);
+    return {
+      kind: "update",
+      subject: emailSubject(topic),
+      value,
+      ...(previousEmail ? { previousValue: previousEmail } : {}),
+    };
   }
 
   const refersToPrevious = PRONOUN_SUBJECT.test(subjectText);
@@ -102,8 +141,7 @@ function checkDirectUpdate(message: string, previousQuestion: string | undefined
   const namedSubject = refersToPrevious
     ? previousPreference ? preferenceTitle(previousPreference) : previousField(previousQuestion)
     : subjectText;
-  if (replacement && prefix?.[1].toLowerCase() !== "replace" && namedSubject.length > 0 &&
-      namedSubject.length <= 120 && !emailEdit) {
+  if (replacement && verb !== "replace" && namedSubject.length > 0 && namedSubject.length <= 120) {
     const value = trimValue(replacement[2]);
     if (value && !/^(?:change|replace|update|edit|set|remove|delete|rename|add)\s+/i.test(value)) {
       return {
@@ -116,6 +154,15 @@ function checkDirectUpdate(message: string, previousQuestion: string | undefined
   }
 
   return CLARIFY_UPDATE;
+}
+
+export function literalEmailReplacement(message: string): Extract<ChatMemoryIntent, { kind: "update" }> | null {
+  const current = message.trim();
+  if (!canWriteFromMessage(current)) return null;
+  const intent = checkDirectUpdate(getExplicitEdit(current), undefined);
+  return intent?.kind === "update" && isEmailSubject(intent.subject) && literalEmail(intent.value) === intent.value
+    ? { ...intent, subject: emailSubject(intent.subject) }
+    : null;
 }
 
 export function splitChatSentences(message: string): string[] {
@@ -259,14 +306,15 @@ export async function detectChatMemoryIntent(
   autoRemember: boolean,
 ): Promise<ChatMemoryIntent> {
   const current = message.trim();
-  if (!current || QUOTED_OR_PASTED.test(current) || NO_SAVE.test(current) || NOT_A_FACT.test(current) || SECRET.test(current)) {
-    return NO_INTENT;
-  }
+  if (!canWriteFromMessage(current)) return NO_INTENT;
 
   const context = previousQuestion && !SECRET.test(previousQuestion) ? previousQuestion.slice(0, 500) : undefined;
-  const directUpdate = checkDirectUpdate(current, context);
+  const edit = getExplicitEdit(current);
+  const directUpdate = checkDirectUpdate(edit, context);
   if (directUpdate?.kind === "update") return directUpdate;
   if (directUpdate?.kind === "clarify") {
+    const replacement = edit?.statement.match(REPLACEMENT);
+    if (replacement && isEmailSubject(trimSubject(replacement[1]))) return directUpdate;
     if (!REPLACEMENT_CANDIDATE.test(current)) return directUpdate;
     const plan = await classify(current, context, true, []);
     return plan.kind === "update" ? plan : directUpdate;
