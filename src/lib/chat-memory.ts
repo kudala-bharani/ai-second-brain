@@ -5,6 +5,7 @@ import {
   findPhoneNumbers,
   getDirectChatMemoryIntent,
   getPhoneRecallSubject,
+  getStandaloneContactIntent,
   hasEmailTopic,
   isDirectMemoryEditRequest,
   isEmailSubject,
@@ -13,6 +14,7 @@ import {
   parsePhoneNumber,
   referencedEmailReplacementSubject,
   type ChatMemoryIntent,
+  type ContactChatIntent,
 } from "@/lib/chat-memory-intent";
 import {
   createMemory,
@@ -22,11 +24,11 @@ import {
 } from "@/lib/memory-store";
 import type { ChatMemoryChange, ChatMemoryMode, ChatReference, Memory, QueryResult } from "@/types";
 
-type UpdateIntent = Extract<ChatMemoryIntent, { kind: "update" }>;
+type UpdateIntent = Extract<ChatMemoryIntent, { kind: "update" }> & { allowCreate?: boolean };
 type Fact = Extract<ChatMemoryIntent, { kind: "save" }>["facts"][number];
 type Draft = { title: string | null; content: string; tags: string[] };
 type EditCandidate = { memory: Memory; draft: Draft };
-type ChatMemoryOutcome = {
+export type ChatMemoryOutcome = {
   reply?: string;
   changes?: ChatMemoryChange[];
   memories?: Memory[];
@@ -357,8 +359,9 @@ async function editFromChat(
   reference?: ChatReference,
 ): Promise<ChatMemoryOutcome> {
   const referringToPriorNote = /\b(?:change|update|replace|edit|correct|set)\s+(?:it|that|this|the\s+(?:memory|note))\b/i.test(message);
-  const referenceIds = referringToPriorNote ? (reference?.sourceIds ?? []) : [];
   const phone = isPhoneSubject(intent.subject);
+  const priorPhoneTopic = phone && getPhoneRecallSubject(reference?.question ?? "");
+  const referenceIds = referringToPriorNote || priorPhoneTopic ? (reference?.sourceIds ?? []) : [];
   const identifiesPhone = phone && (!!intent.previousValue || (!!phoneScope(intent.subject)
     && getDirectChatMemoryIntent(message, undefined, false).kind === "update"));
   const priorPhone = phone && !identifiesPhone && referringToPriorNote && reference
@@ -378,10 +381,15 @@ async function editFromChat(
   );
   const subject = subjectName(intent.subject);
   const email = isEmailSubject(intent.subject);
-  const phoneReferences = priorPhone && reference && referenceIds.length
+  const contactFields = (note: Memory) => phone ? phoneFields(note, intent.subject)
+    : email ? emailFields(note, intent.subject) : [];
+  const labeledContacts = notes.some((note) => contactFields(note).length > 0);
+  const trustPriorAnswer = priorPhone || (!labeledContacts && priorPhoneTopic);
+  const phoneReferences = trustPriorAnswer && reference && referenceIds.length
     ? await verifyPhoneReferences(client, userId, notes, reference, intent.subject) : undefined;
-  const candidates = notes
-    .filter((note) => !phoneReferences || phoneReferences.has(note.id))
+  const availableNotes = phoneReferences ? notes.filter((note) => phoneReferences.has(note.id)) : notes;
+  const ambiguousPhone = phone && !intent.previousValue && availableNotes.some((note) => contactFields(note).length > 1);
+  const candidates = availableNotes
     .filter((note) => email || phone || !intent.previousValue
       || referenceIds.includes(note.id)
       || normalize(note.title ?? "").includes(subject)
@@ -397,8 +405,26 @@ async function editFromChat(
     : referredEmail ? referenced : exactMatches.length ? exactMatches : referenced.length ? referenced : candidates;
   const uncertain = incomplete && (phone ? !phoneReferences : !exactMatches.length && !referenced.length);
 
-  if (likely.length !== 1 || uncertain) {
-    if (likely.length > 1 || uncertain) {
+  if (!likely.length && intent.allowCreate && !labeledContacts && !incomplete && !referenceIds.length) {
+    const title = intent.subject;
+    const content = `${title}: ${intent.value}`;
+    const id = factId(userId, `contact field: ${subject}`);
+    const created = await createMemory(client, userId, { title, content, tags: [] }, { id, allowUnindexed: true });
+    if (created?.id === id && created.title === title && created.content === content) {
+      return { ...changed("saved", [created]), reply: "I saved that to your notebook." };
+    }
+    if (!created) {
+      const { data: existing, error } = await client.from("memories").select(MEMORY_COLUMNS)
+        .eq("user_id", userId).eq("id", id).maybeSingle();
+      if (!error && existing?.user_id === userId && existing.title === title && existing.content === content) {
+        return { reply: "That memory already has this value.", memories: [existing] };
+      }
+    }
+    return { reply: "I couldn’t verify the saved change. Ask for the saved value, then try again." };
+  }
+
+  if (likely.length !== 1 || uncertain || ambiguousPhone) {
+    if (likely.length > 1 || uncertain || ambiguousPhone) {
       const titles = [...new Set(likely.map(({ memory }) => memory.title || "Untitled memory"))].slice(0, 4);
       const choices = titles.length ? " I found " + titles.map((title) => "“" + title + "”").join(", ") + "." : "";
       return { reply: "Which memory should I update?" + choices + " Include its title or the exact text to replace in your update request." };
@@ -479,10 +505,15 @@ export async function handleChatMemory(
   mode: ChatMemoryMode,
   reference?: ChatReference,
   plan?: ChatMessagePlan | null,
+  directIntent?: ChatMemoryIntent | ContactChatIntent,
 ): Promise<ChatMemoryOutcome> {
   if (mode === "read-only") return {};
 
-  const direct = getDirectChatMemoryIntent(message, reference?.question, mode === "auto");
+  const direct = directIntent ?? getStandaloneContactIntent(message, reference?.question)
+    ?? getDirectChatMemoryIntent(message, reference?.question, mode === "auto");
+  if ("explicit" in direct && !direct.explicit && mode !== "auto") {
+    return { reply: "Automatic saving is off. Start with “Remember” to save this detail." };
+  }
   const referencedEmail = referencedEmailReplacementSubject(message);
   const update = direct.kind === "update" ? direct
     : plan?.update ? { kind: "update" as const, ...plan.update } : undefined;
@@ -562,7 +593,7 @@ async function rememberFacts(
         title: fact.title,
         content: fact.content,
         tags: [],
-      }, { id: factId(userId, fact.content) });
+      }, { id: factId(userId, fact.content), allowUnindexed: true });
       if (!memory) hasExisting = true;
       else if (memory.title === fact.title && memory.content === fact.content) saved.push(memory);
       else failed = true;
