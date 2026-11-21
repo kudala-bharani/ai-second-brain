@@ -9,6 +9,13 @@ const geist = localFont({
   variable: '--font-geist',
 })
 
+const newsreader = localFont({
+  src: './fonts/newsreader.woff2',
+  weight: '400',
+  display: 'swap',
+  variable: '--font-newsreader',
+})
+
 export const metadata: Metadata = {
   title: {
     default: 'AI Second Brain',
@@ -22,7 +29,7 @@ export const metadata: Metadata = {
 }
 
 export const viewport: Viewport = {
-  themeColor: '#101314',
+  themeColor: '#141511',
   colorScheme: 'dark',
   width: 'device-width',
   initialScale: 1,
@@ -34,7 +41,7 @@ export default function RootLayout({
   children: React.ReactNode
 }) {
   return (
-    <html lang="en" className={geist.variable}>
+    <html lang="en" className={`${geist.variable} ${newsreader.variable}`}>
       <body>
         {children}
       </body>

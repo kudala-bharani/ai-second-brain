@@ -1,19 +1,19 @@
 import Link from "next/link";
-import { ArrowRight, BookOpen, ChevronDown, FileText, Search } from "lucide-react";
+import { ArrowRight, BookOpen, ChevronDown, FileText, MessageSquare } from "lucide-react";
 import "./landing.css";
 
 const STEPS = [
   {
-    title: "Capture what matters",
-    description: "Save a passage, a meeting note, or a decision. Add a title and tags if they’ll help you find it again.",
+    title: "Save a note",
+    description: "Keep a meeting note, a passage, or a decision. Add a title and tags to organize it.",
   },
   {
-    title: "Ask in your own words",
-    description: "Describe what you’re looking for. AI Second Brain searches for related notes even when the wording is different.",
+    title: "Ask a question",
+    description: "Use your own words. Related notes can match even when they use different terms.",
   },
   {
     title: "Check the source",
-    description: "Read the supporting excerpts and open the original notes. Return to a question from your history when your library changes.",
+    description: "Open the notes behind an answer and find past questions in your history.",
   },
 ];
 
@@ -21,32 +21,27 @@ function NotebookExample() {
   return (
     <figure className="workbench-example" id="example-workspace">
       <figcaption>
-        <span><BookOpen size={15} aria-hidden="true" /> Your notebook</span>
-        <span>Example workspace</span>
+        <BookOpen size={16} aria-hidden="true" /> Example workspace
       </figcaption>
 
       <div className="workbench-grid">
         <div className="workbench-reading">
           <div className="example-question">
-            <Search size={16} aria-hidden="true" />
+            <MessageSquare size={16} aria-hidden="true" />
             What did we decide about onboarding?
           </div>
 
           <div className="example-answer">
-            <h2>Answer</h2>
+            <h2>From your notes</h2>
             <p>
-              Start with one example project and a short checklist. Save the
-              product tour for after the{" "}
-              <span className="example-source-reference">
-                first note.{" "}
-                <a className="example-citation" href="#example-source-excerpt" aria-label="Source 1, Monday planning notes">[1]</a>
-              </span>
+              “Ship one example project and a short checklist first.”{" "}
+              <a className="example-citation" href="#example-source-excerpt" aria-label="Source 1, Monday planning notes">1</a>
             </p>
           </div>
 
           <details className="example-evidence" id="example-source" open>
             <summary>
-              <span className="example-citation" aria-hidden="true">[1]</span>
+              <FileText size={15} aria-hidden="true" />
               <span>Monday planning notes</span>
               <ChevronDown size={15} aria-hidden="true" />
             </summary>
@@ -85,8 +80,8 @@ type LandingPageProps = {
 
 export default function LandingPage({ showConfigWarning }: LandingPageProps) {
   return (
-    <div className="landing-page">
-      <a className="landing-skip sr-only" href="#landing-content">Skip to content</a>
+    <div className="landing-page" id="landing-top">
+      <a className="sr-only focus:not-sr-only landing-skip" href="#landing-content">Skip to content</a>
 
       {showConfigWarning && (
         <div className="landing-config" role="alert">
@@ -107,7 +102,6 @@ export default function LandingPage({ showConfigWarning }: LandingPageProps) {
             AI Second Brain
           </Link>
           <nav className="landing-page-links" aria-label="On this page">
-            <a href="#example-workspace">Example</a>
             <a href="#how-it-works">How it works</a>
           </nav>
           <nav className="landing-actions" aria-label="Account">
@@ -120,16 +114,15 @@ export default function LandingPage({ showConfigWarning }: LandingPageProps) {
       <main id="landing-content" tabIndex={-1}>
         <section className="landing-frame landing-hero" aria-labelledby="landing-title">
           <div className="landing-hero-copy">
-            <h1 id="landing-title"><span>Answers from</span> your own notes.</h1>
+            <h1 id="landing-title"><span>Answers from</span> <span>your own notes.</span></h1>
             <p>
-              Save what you learn. Come back with a question and get an answer
-              that points to the notes it came from.
+              Keep meeting notes, ideas, and details you’ll want again. Ask in
+              your own words and go straight to the source.
             </p>
             <div className="landing-actions">
               <Link href="/auth/signup" className="btn-primary btn-lg">
                 Get started free <ArrowRight size={16} aria-hidden="true" />
               </Link>
-              <Link href="/auth/login" className="btn-secondary btn-lg">Log in</Link>
             </div>
           </div>
           <NotebookExample />
@@ -137,15 +130,12 @@ export default function LandingPage({ showConfigWarning }: LandingPageProps) {
 
         <section className="landing-workflow" id="how-it-works" aria-labelledby="workflow-heading">
           <div className="landing-frame landing-workflow-inner">
-            <div>
-              <h2 id="workflow-heading">From a saved note to an answer</h2>
-              <p>Your notebook keeps the question, the answer, and the original evidence together.</p>
-            </div>
+            <h2 id="workflow-heading">From a saved note to an answer</h2>
             <ol className="landing-steps" role="list">
-              {STEPS.map(({ title, description }, index) => (
+              {STEPS.map(({ title, description }) => (
                 <li key={title}>
-                  <span className="landing-step-index" aria-hidden="true">{index + 1}</span>
-                  <div><h3>{title}</h3><p>{description}</p></div>
+                  <h3>{title}</h3>
+                  <p>{description}</p>
                 </li>
               ))}
             </ol>
@@ -169,7 +159,7 @@ export default function LandingPage({ showConfigWarning }: LandingPageProps) {
       <footer className="landing-footer">
         <div className="landing-frame landing-footer-inner">
           <span>AI Second Brain</span>
-          <span>Answers with sources from your notes</span>
+          <a href="#landing-top">Back to top</a>
         </div>
       </footer>
     </div>

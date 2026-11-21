@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useCallback, useMemo } from 'react'
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import type { Memory, QueryHistoryItem } from '@/types'
@@ -10,7 +10,7 @@ import AddMemory  from '@/components/AddMemory'
 import AskQuestion from '@/components/AskQuestion'
 import MemoryList, { type MemoryRevealRequest } from '@/components/MemoryList'
 
-import { ArrowDown, BookOpen, Plus } from 'lucide-react'
+import { ArrowDown, LibraryBig, Plus, X } from 'lucide-react'
 import './workspace.css'
 
 export default function DashboardPage() {
@@ -24,6 +24,9 @@ export default function DashboardPage() {
   const [historyError, setHistoryError] = useState(false)
   const [historyVersion, setHistoryVersion] = useState(0)
   const [revealMemory, setRevealMemory] = useState<MemoryRevealRequest | null>(null)
+  const [captureOpen, setCaptureOpen] = useState(false)
+  const capturePanel = useRef<HTMLElement>(null)
+  const captureTrigger = useRef<HTMLElement | null>(null)
   const memoryIds = useMemo(() => new Set(memories.map((memory) => memory.id)), [memories])
 
   const refreshHistory = useCallback(() => {
@@ -97,6 +100,26 @@ export default function DashboardPage() {
     handleMemoriesChanged([memory])
   }
 
+  const focusCapture = useCallback(() => {
+    capturePanel.current?.focus({ preventScroll: true })
+    capturePanel.current?.scrollIntoView({ block: 'nearest' })
+  }, [])
+
+  useEffect(() => {
+    if (captureOpen) focusCapture()
+  }, [captureOpen, focusCapture])
+
+  function openCapture() {
+    captureTrigger.current = document.activeElement instanceof HTMLElement ? document.activeElement : null
+    if (captureOpen) focusCapture()
+    else setCaptureOpen(true)
+  }
+
+  function closeCapture() {
+    setCaptureOpen(false)
+    captureTrigger.current?.focus()
+  }
+
   // ── Logout ────────────────────────────────────────────────────────────────────
   async function handleLogout() {
     await supabase.auth.signOut()
@@ -107,47 +130,23 @@ export default function DashboardPage() {
   // ─────────────────────────────────────────────────────────────────────────────
 
   const memoryCount = memories.length
-  const totalWords  = memories.reduce(
-    (acc, m) => acc + m.content.split(/\s+/).filter(Boolean).length,
-    0
-  )
-  const taggedMemories = memories.filter((m) => (m.tags?.length ?? 0) > 0).length
-  const recentQuestions = queryHistory?.length ?? 0
 
   return (
     <div className="workspace">
       <Header userEmail={user?.email ?? ''} onLogout={handleLogout} />
 
       <main className="workspace-main">
-        <section className="workspace-width workspace-overview" aria-labelledby="workspace-title">
-          <div className="workspace-overview-inner">
-            <div className="workspace-intro">
-              <h1 id="workspace-title">Your notebook</h1>
-              <dl className="workspace-stats" aria-label="Notebook totals">
-                <div><dt>Memories</dt><dd>{memoryCount}</dd></div>
-                <div><dt>Words stored</dt><dd>{totalWords.toLocaleString()}</dd></div>
-                <div>
-                  <dt>Tagged notes</dt>
-                  <dd>
-                    {taggedMemories}
-                    {memoryCount > 0 && (
-                      <span> ({Math.round((taggedMemories / memoryCount) * 100)}%)</span>
-                    )}
-                  </dd>
-                </div>
-                <div><dt>Recent questions</dt><dd>{recentQuestions}</dd></div>
-              </dl>
-            </div>
-            <div className="workspace-actions">
-              <a className="btn-secondary mobile-question-link" href="#ai-response-section">
-                Ask a question <ArrowDown size={15} aria-hidden="true" />
-              </a>
-              <a className="btn-primary" href="#capture-section">
-                <Plus size={17} aria-hidden="true" /> Add memory
-              </a>
-            </div>
+        <div className="workspace-width workspace-overview">
+          <h1>Your notebook</h1>
+          <div className="workspace-actions">
+            <a className="btn-ghost workspace-library-link" href="#memory-list-section">
+              Memories <ArrowDown size={15} aria-hidden="true" />
+            </a>
+            <button type="button" className="btn-primary workspace-add" onClick={openCapture} aria-expanded={captureOpen} aria-controls="capture-section">
+              <Plus size={17} aria-hidden="true" /> Add memory
+            </button>
           </div>
-        </section>
+        </div>
 
         <div className="workspace-width workspace-columns">
           <AskQuestion
@@ -159,14 +158,28 @@ export default function DashboardPage() {
             historyError={historyError}
             onRefreshHistory={refreshHistory}
             onOpenMemory={handleOpenMemory}
+            onOpenCapture={openCapture}
             onMemoriesChanged={handleMemoriesChanged}
           />
 
-          <div className="workspace-column">
+          <aside className="workspace-column" aria-label="Memory library">
+            <section ref={capturePanel} id="capture-section" hidden={!captureOpen} className="workspace-sheet capture-sheet" aria-labelledby="capture-heading" tabIndex={-1}>
+              <div className="workspace-section-heading">
+                <h2 id="capture-heading">Add memory</h2>
+                <button type="button" className="icon-button" aria-label="Close add memory" onClick={closeCapture}>
+                  <X size={18} aria-hidden="true" />
+                </button>
+              </div>
+              <AddMemory onMemoryAdded={handleMemoryChanged} />
+            </section>
+
             <section id="memory-list-section" className="workspace-sheet library-section" aria-labelledby="memories-heading">
               <div className="workspace-section-heading">
-                <BookOpen size={17} aria-hidden="true" />
-                <h2 id="memories-heading">Your memories</h2>
+                <div className="workspace-heading-label">
+                  <LibraryBig size={17} aria-hidden="true" />
+                  <h2 id="memories-heading">Memories</h2>
+                </div>
+                {!loadingMem && <span className="library-total" aria-label={`${memoryCount} saved memories`}>{memoryCount.toLocaleString()}</span>}
               </div>
               {loadingMem ? (
                 <div className="memory-skeleton" role="status">
@@ -187,22 +200,9 @@ export default function DashboardPage() {
                 />
               )}
             </section>
-
-            <section id="capture-section" className="workspace-sheet capture-sheet" aria-labelledby="capture-heading" tabIndex={-1}>
-              <div className="workspace-section-heading">
-                <Plus size={17} aria-hidden="true" />
-                <h2 id="capture-heading">Add memory</h2>
-              </div>
-              <AddMemory onMemoryAdded={handleMemoryChanged} />
-            </section>
-          </div>
+          </aside>
         </div>
       </main>
-
-      <footer className="workspace-width workspace-footer">
-        <span>AI Second Brain</span>
-        <span>Answers are grounded in your saved notes.</span>
-      </footer>
     </div>
   )
 }
