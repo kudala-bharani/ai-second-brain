@@ -10,8 +10,8 @@
 .auth-masthead {
   display: flex;
   align-items: center;
-  min-block-size: 4rem;
-  padding-inline: max(1.25rem, calc((100% - 72rem) / 2));
+  min-block-size: 3.5rem;
+  padding-inline: max(1.25rem, calc((100% - 79rem) / 2));
   border-block-end: 1px solid var(--line);
 }
 
@@ -19,12 +19,12 @@
   display: grid;
   flex: 1;
   place-items: center;
-  padding: clamp(2.5rem, 7vh, 5rem) 1.25rem;
+  padding: clamp(2rem, 6dvh, 5rem) 1.25rem;
 }
 
 .auth-workspace {
-  inline-size: min(100%, 25rem);
-  padding: clamp(1.5rem, 4vw, 2rem);
+  inline-size: min(100%, 28rem);
+  padding: clamp(1.5rem, 4vw, 2.25rem);
   border: 1px solid var(--line);
   border-radius: 0.875rem;
   background: var(--sheet);
@@ -35,11 +35,11 @@
 }
 
 .auth-heading h1 {
-  font-family: var(--sans);
-  font-size: clamp(1.75rem, 1.5rem + 1vw, 2rem);
-  font-weight: 600;
-  letter-spacing: -0.035em;
-  line-height: 1.12;
+  font-family: var(--editorial);
+  font-size: clamp(2.4rem, 2.15rem + 1vw, 3rem);
+  font-weight: 400;
+  letter-spacing: -0.031em;
+  line-height: 1;
   text-wrap: balance;
 }
 
@@ -75,7 +75,7 @@
 
 .auth-form .input {
   min-block-size: 2.875rem;
-  background: var(--inset);
+  background: var(--paper);
   font-size: 1rem;
 }
 

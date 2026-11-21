@@ -1,10 +1,11 @@
 'use client'
 
 import { useEffect, useLayoutEffect, useRef, useState, type FormEvent, type KeyboardEvent } from 'react'
-import { ArrowLeft, ArrowRight, ArrowUp, ArrowUpRight, Check, History, Loader2, MessageSquare, Plus, RotateCcw } from 'lucide-react'
+import { ArrowLeft, ArrowRight, ArrowUp, ArrowUpRight, BookOpenText, Check, History, Loader2, MessageSquare, Plus, RotateCcw, Search, Target } from 'lucide-react'
 import TextareaAutosize from 'react-textarea-autosize'
 import type { ApiResponse, ChatMemoryMode, ChatReference, Memory, QueryHistoryItem, QueryResult } from '@/types'
 import AIResponse from '@/components/AIResponse'
+import './chat.css'
 
 interface AskQuestionProps {
   userId?: string
@@ -14,6 +15,7 @@ interface AskQuestionProps {
   historyError: boolean
   onRefreshHistory: () => void
   onOpenMemory: (id: string) => void
+  onOpenCapture?: () => void
   onMemoriesChanged: (memories: Memory[]) => void
 }
 
@@ -35,8 +37,8 @@ type View =
   | { mode: 'saved'; item: QueryHistoryItem }
 
 const EXAMPLE_QUESTIONS = [
-  'What did I learn recently?',
-  'What goals have I written about?',
+  { question: 'What did I learn recently?', icon: Search },
+  { question: 'What goals have I written about?', icon: Target },
 ]
 const FIRST_MEMORY_EXAMPLE = 'Remember that I prefer morning meetings.'
 const MAX_REFERENCE_SOURCES = 5
@@ -98,6 +100,7 @@ export default function AskQuestion({
   historyError,
   onRefreshHistory,
   onOpenMemory,
+  onOpenCapture,
   onMemoriesChanged,
 }: AskQuestionProps) {
   const preferenceKey = userId ? `ai-second-brain:chat:auto-save-facts:v1:${userId}` : null
@@ -249,14 +252,11 @@ export default function AskQuestion({
   }
 
   return (
-    <section id="ai-response-section" className="workspace-sheet query-sheet" aria-labelledby="query-heading" tabIndex={-1}>
+    <section id="ai-response-section" className="workspace-sheet query-sheet notebook-chat" aria-labelledby="query-heading" tabIndex={-1}>
       <div className="workspace-section-heading chat-heading">
         <div className="chat-heading-title">
           <MessageSquare size={17} aria-hidden="true" />
-          <div>
-            <h2 id="query-heading" ref={chatHeadingRef} tabIndex={-1}>Ask your notebook</h2>
-            <p>Ask a question or share a fact.</p>
-          </div>
+          <h2 id="query-heading" ref={chatHeadingRef} tabIndex={-1}>Chat</h2>
         </div>
         <div className="chat-toolbar">
           {view.mode === 'chat' && turns.length > 0 && (
@@ -265,12 +265,12 @@ export default function AskQuestion({
             </button>
           )}
           {view.mode === 'chat' ? (
-            <button className="btn-secondary chat-tool" type="button" onClick={() => showView({ mode: 'history' })}>
+            <button className="btn-ghost chat-tool" type="button" onClick={() => showView({ mode: 'history' })}>
               <History size={16} aria-hidden="true" /> History
             </button>
           ) : (
-            <button className="btn-secondary chat-tool" type="button" onClick={() => showView({ mode: 'chat' })}>
-              <MessageSquare size={15} aria-hidden="true" /> Back to chat
+            <button className="btn-ghost chat-tool" type="button" onClick={() => showView({ mode: 'chat' })}>
+              <ArrowLeft size={15} aria-hidden="true" /> Back to chat
             </button>
           )}
         </div>
@@ -290,40 +290,53 @@ export default function AskQuestion({
       >
         {turns.length === 0 ? (
           <div className="chat-empty">
-            {!chatReady ? (
-              <p className="field-detail">Loading your notes…</p>
-            ) : hasMemories ? (
-              <>
-                <h3>Start with a question</h3>
-                <ul className="chat-starters" aria-label="Suggested questions">
-                  {EXAMPLE_QUESTIONS.map((example) => (
-                    <li key={example}>
+            <div className="chat-welcome">
+              <div className="chat-notebook-mark" aria-hidden="true"><BookOpenText size={25} strokeWidth={1.5} /></div>
+              <h3>{chatReady && !hasMemories ? 'Save your first memory' : 'Ask your notebook'}</h3>
+              {!chatReady ? (
+                <p role="status">Loading your notes…</p>
+              ) : hasMemories ? (
+                <>
+                  <p>Find a detail in your notes or share something to remember.</p>
+                  <ul className="chat-starters" aria-label="Suggested questions">
+                    {EXAMPLE_QUESTIONS.map(({ question: example, icon: Icon }) => (
+                      <li key={example}>
+                        <button type="button" onClick={() => {
+                          setQuestion(example)
+                          composerRef.current?.focus()
+                        }}>
+                          <Icon size={16} aria-hidden="true" />
+                          <span>{example}</span>
+                          <ArrowRight size={15} aria-hidden="true" />
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                </>
+              ) : (
+                <>
+                  <p>
+                    Share a detail in chat or{' '}
+                    {onOpenCapture
+                      ? <button type="button" className="chat-capture-link" onClick={onOpenCapture}>add a memory</button>
+                      : <a href="#capture-section" className="chat-capture-link">add a memory</a>}
+                    .
+                  </p>
+                  <ul className="chat-starters" aria-label="Suggested message">
+                    <li>
                       <button type="button" onClick={() => {
-                        setQuestion(example)
+                        setQuestion(FIRST_MEMORY_EXAMPLE)
                         composerRef.current?.focus()
                       }}>
-                        {example} <ArrowRight size={15} aria-hidden="true" />
+                        <Plus size={16} aria-hidden="true" />
+                        <span>{FIRST_MEMORY_EXAMPLE}</span>
+                        <ArrowRight size={15} aria-hidden="true" />
                       </button>
                     </li>
-                  ))}
-                </ul>
-              </>
-            ) : (
-              <>
-                <h3>Start with something to remember</h3>
-                <p>Share a detail in chat or <a href="#capture-section" className="chat-capture-link">add a memory</a>.</p>
-                <ul className="chat-starters" aria-label="Suggested message">
-                  <li>
-                    <button type="button" onClick={() => {
-                      setQuestion(FIRST_MEMORY_EXAMPLE)
-                      composerRef.current?.focus()
-                    }}>
-                      {FIRST_MEMORY_EXAMPLE} <ArrowRight size={15} aria-hidden="true" />
-                    </button>
-                  </li>
-                </ul>
-              </>
-            )}
+                  </ul>
+                </>
+              )}
+            </div>
           </div>
         ) : (
           <ol className="chat-turns" role="list">
@@ -363,80 +376,84 @@ export default function AskQuestion({
 
       {view.mode === 'chat' ? (
         <form className="chat-composer" onSubmit={handleSubmit}>
-          <label htmlFor="notebook-question" className="sr-only">Your message</label>
-          <div className="chat-compose-row">
-            <TextareaAutosize
-              ref={composerRef}
-              id="notebook-question"
-              value={question}
-              onChange={(event) => setQuestion(event.target.value)}
-              onKeyDown={handleKeyDown}
-              placeholder="Ask or share a detail…"
-              disabled={!chatReady}
-              maxLength={2000}
-              minRows={1}
-              maxRows={4}
-              className="input chat-input"
-            />
-            <button type="submit" className="btn-primary chat-send" disabled={!canAsk || question.trim().length < 3}>
-              <span>Send</span><ArrowUp size={17} aria-hidden="true" />
-            </button>
-          </div>
-          <div className="chat-composer-footer">
-            <label className="chat-auto-save">
-              <input type="checkbox" checked={autoSaveFacts} disabled={!chatReady} onChange={(event) => changeAutoSaveFacts(event.target.checked)} />
-              Auto-save facts
-            </label>
-            <p className="field-detail chat-keyboard-hint">
-              <kbd>Enter</kbd> to send <span aria-hidden="true">·</span> <kbd>Shift</kbd> + <kbd>Enter</kbd> for a new line
-            </p>
+          <div className="chat-compose-content">
+            <label htmlFor="notebook-question" className="sr-only">Your message</label>
+            <div className="chat-compose-row">
+              <TextareaAutosize
+                ref={composerRef}
+                id="notebook-question"
+                value={question}
+                onChange={(event) => setQuestion(event.target.value)}
+                onKeyDown={handleKeyDown}
+                placeholder="Ask or save a detail…"
+                disabled={!chatReady}
+                maxLength={2000}
+                minRows={1}
+                maxRows={4}
+                className="input chat-input"
+              />
+              <button type="submit" className="btn-primary chat-send" disabled={!canAsk || question.trim().length < 3}>
+                <ArrowUp size={17} aria-hidden="true" /><span>Send</span>
+              </button>
+            </div>
+            <div className="chat-composer-footer">
+              <label className="chat-auto-save">
+                <input type="checkbox" checked={autoSaveFacts} disabled={!chatReady} onChange={(event) => changeAutoSaveFacts(event.target.checked)} />
+                <span>Auto-save facts</span>
+              </label>
+              <p className="field-detail chat-keyboard-hint">
+                <kbd>Enter</kbd> to send <span aria-hidden="true">·</span> <kbd>Shift</kbd> + <kbd>Enter</kbd> for a new line
+              </p>
+            </div>
           </div>
         </form>
       ) : (
         <div className="chat-scroll chat-history-view" key={view.mode}>
-          {view.mode === 'history' ? (
-            <>
-              <h3 ref={historyHeadingRef} tabIndex={-1}>Saved answers</h3>
-              {history && history.length > 0 ? (
-                <ul className="history-list">
-                  {history.map((item) => (
-                    <li key={item.id}>
-                      <button type="button" onClick={() => showView({ mode: 'saved', item })}>
-                        <span className="history-question">{item.question}</span>
-                        <time dateTime={item.createdAt}>{HISTORY_DATE.format(new Date(item.createdAt))}</time>
-                        <ArrowRight size={15} aria-hidden="true" />
-                      </button>
-                    </li>
-                  ))}
-                </ul>
-              ) : historyError ? (
-                <div className="chat-history-empty">
-                  <p>Saved answers couldn’t be loaded.</p>
-                  <button type="button" className="btn-secondary chat-tool" onClick={onRefreshHistory}>Try again</button>
+          <div className="chat-history-content">
+            {view.mode === 'history' ? (
+              <>
+                <h3 ref={historyHeadingRef} tabIndex={-1}>Saved answers</h3>
+                {history && history.length > 0 ? (
+                  <ul className="history-list">
+                    {history.map((item) => (
+                      <li key={item.id}>
+                        <button type="button" onClick={() => showView({ mode: 'saved', item })}>
+                          <span className="history-question">{item.question}</span>
+                          <time dateTime={item.createdAt}>{HISTORY_DATE.format(new Date(item.createdAt))}</time>
+                          <ArrowRight size={15} aria-hidden="true" />
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                ) : historyError ? (
+                  <div className="chat-history-empty">
+                    <p>Saved answers couldn’t be loaded.</p>
+                    <button type="button" className="btn-secondary chat-tool" onClick={onRefreshHistory}>Try again</button>
+                  </div>
+                ) : (
+                  <p className="chat-history-empty" role="status">
+                    {history ? 'Saved answers will appear here.' : 'Loading saved answers…'}
+                  </p>
+                )}
+              </>
+            ) : (
+              <>
+                <div className="chat-saved-toolbar">
+                  <button type="button" className="btn-ghost chat-tool" onClick={() => showView({ mode: 'history' })}>
+                    <ArrowLeft size={15} aria-hidden="true" /> Back to history
+                  </button>
+                  <button type="button" className="btn-secondary chat-tool" disabled={!canAsk} onClick={() => {
+                    showView({ mode: 'chat' })
+                    void ask({ question: view.item.question, memoryMode: 'read-only' })
+                  }}>
+                    <RotateCcw size={15} aria-hidden="true" /> Ask again
+                  </button>
                 </div>
-              ) : (
-                <p className="chat-history-empty" role="status">
-                  {history ? 'Saved answers will appear here.' : 'Loading saved answers…'}
-                </p>
-              )}
-            </>
-          ) : (
-            <>
-              <div className="chat-saved-toolbar">
-                <button type="button" className="btn-ghost chat-tool" onClick={() => showView({ mode: 'history' })}>
-                  <ArrowLeft size={15} aria-hidden="true" /> Back to history
-                </button>
-                <button type="button" className="btn-secondary chat-tool" disabled={!canAsk} onClick={() => {
-                  showView({ mode: 'chat' })
-                  void ask({ question: view.item.question, memoryMode: 'read-only' })
-                }}>
-                  <RotateCcw size={15} aria-hidden="true" /> Ask again
-                </button>
-              </div>
-              <h3 ref={historyHeadingRef} tabIndex={-1} className="chat-saved-question">{view.item.question}</h3>
-              <ChatAnswer key={view.item.id} result={view.item.result} availableMemoryIds={availableMemoryIds} onOpenMemory={onOpenMemory} />
-            </>
-          )}
+                <h3 ref={historyHeadingRef} tabIndex={-1} className="chat-saved-question">{view.item.question}</h3>
+                <ChatAnswer key={view.item.id} result={view.item.result} availableMemoryIds={availableMemoryIds} onOpenMemory={onOpenMemory} />
+              </>
+            )}
+          </div>
         </div>
       )}
       <p className="sr-only" role="status">{announcement}</p>

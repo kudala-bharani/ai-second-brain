@@ -2,7 +2,7 @@
 
 import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
 import type { QueryResult, MemoryMatch } from '@/types'
-import { ArrowUpRight, Check, ChevronDown, Copy } from 'lucide-react'
+import { ArrowUpRight, BookOpenText, Check, ChevronDown, Copy } from 'lucide-react'
 import './response.css'
 
 // ─── Markdown renderer (lightweight, no external lib) ─────────────────────────
@@ -291,8 +291,11 @@ export default function AIResponse({ result, onOpenMemory, availableMemoryIds }:
   return (
     <section className="answer-reading" aria-labelledby={answerHeadingId}>
       <header className="answer-header">
-        <h3 id={answerHeadingId}>Answer</h3>
-        <button type="button" className="btn btn-ghost btn-sm" onClick={handleCopy}>
+        <div className="answer-identity">
+          <span className="answer-notebook-mark" aria-hidden="true"><BookOpenText size={16} strokeWidth={1.65} /></span>
+          <h3 id={answerHeadingId}>Answer</h3>
+        </div>
+        <button type="button" className="btn-ghost btn-sm answer-copy" onClick={handleCopy}>
           {copied ? <Check size={15} aria-hidden="true" /> : <Copy size={15} aria-hidden="true" />}
           {copied ? 'Copied' : 'Copy answer'}
         </button>

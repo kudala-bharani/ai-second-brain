@@ -2,7 +2,7 @@
 
 import { useEffect, useId, useRef, useState } from 'react'
 import { formatDistanceToNow } from 'date-fns'
-import { Trash2, Loader2, ChevronDown, ChevronUp, Pencil } from 'lucide-react'
+import { Trash2, Loader2, ChevronDown, ChevronUp, Pencil, FileText, Search, Tag } from 'lucide-react'
 import type { Memory } from '@/types'
 
 // ─── Memory Card ──────────────────────────────────────────────────────────────
@@ -113,6 +113,7 @@ function MemoryCard({ memory, onDelete, onUpdate, revealRequest, onReveal }: Mem
   return (
     <article className="memory-entry" aria-busy={deleting || saving}>
       <div className="memory-entry-header">
+        <div className="memory-entry-icon" aria-hidden="true"><FileText size={17} strokeWidth={1.6} /></div>
         <div className="memory-entry-heading">
           <h3 id={`${editorId}-heading`} ref={headingRef} tabIndex={-1}>{memory.title || 'Untitled note'}</h3>
           <p className="field-detail">
@@ -250,31 +251,33 @@ export default function MemoryList({ memories, onDelete, onUpdate, revealMemory 
   return (
     <div className="memory-list">
       <div className="memory-filters">
-        <div>
-          <label htmlFor="memory-search" className="label">Search memories</label>
+        <div className="memory-filter">
+          <label htmlFor="memory-search" className="sr-only">Search memories</label>
+          <Search size={16} aria-hidden="true" />
           <input
             id="memory-search"
             type="search"
             value={search}
             onChange={(event) => setSearch(event.target.value)}
-            placeholder="Title or content"
+            placeholder="Search notes"
             className="input"
           />
         </div>
-        <div>
-          <label htmlFor="memory-tag-filter" className="label">Filter by tag</label>
+        <div className="memory-filter">
+          <label htmlFor="memory-tag-filter" className="sr-only">Filter by tag</label>
+          <Tag size={15} aria-hidden="true" />
           <input
             id="memory-tag-filter"
             type="search"
             value={tagFilter}
             onChange={(event) => setTagFilter(event.target.value)}
-            placeholder="e.g. research"
+            placeholder="Tag"
             className="input"
           />
         </div>
       </div>
 
-      <p className="field-detail memory-list-count" role="status">
+      <p className={search || tagFilter ? 'field-detail memory-list-count' : 'sr-only'} role="status">
         {search || tagFilter
           ? `${filtered.length} of ${memories.length} ${memories.length === 1 ? 'memory' : 'memories'}`
           : `${memories.length} ${memories.length === 1 ? 'memory' : 'memories'} stored`}
