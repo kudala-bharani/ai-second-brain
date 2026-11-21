@@ -1,241 +1,115 @@
-# 🧠 AI Second Brain
+# AI Second Brain
 
-An AI notebook for remembering personal facts, searching saved notes, and checking the evidence behind an answer. Chat updates a note in place and links to the saved change.
+A personal notebook you can talk to. Save notes and details you want to remember, ask questions in your own words, and open the notes that support an answer. Chat can also update a saved detail and link you to the changed note.
 
-🔗 **Live Demo:** https://ai-second-brain-beige.vercel.app/
+[Live demo](https://ai-second-brain-beige.vercel.app/) · [Try a chat update](#try-a-chat-update) · [Run locally](#run-locally)
 
-![Next.js](https://img.shields.io/badge/Next.js-14-black?style=flat-square&logo=next.js)
-![Supabase](https://img.shields.io/badge/Supabase-pgvector-3ECF8E?style=flat-square&logo=supabase)
-![OpenRouter](https://img.shields.io/badge/OpenRouter-LLM%20Gateway-8b5cf6?style=flat-square)
-![ONNX Runtime](https://img.shields.io/badge/ONNX_Runtime-Embeddings-f59e0b?style=flat-square)
-![TypeScript](https://img.shields.io/badge/TypeScript-5-3178C6?style=flat-square&logo=typescript)
-![Tailwind CSS](https://img.shields.io/badge/Tailwind-3-38BDF8?style=flat-square&logo=tailwind-css)
+## Features
 
----
+| Feature | What you can do |
+| --- | --- |
+| **Notebook** | Add, edit, and delete notes with optional titles and comma-separated tags. Search by title or content, or filter by tag. |
+| **Workspace** | Chat and browse memories side by side on desktop. Open **Add memory** beside the chat, or jump to **Memories** on a phone. |
+| **Ask and verify** | Search your notes in plain language. Copy an answer, expand a citation to see its excerpt, and open the original note. |
+| **Remember from chat** | Ask chat to save a fact, or enable **Auto-save facts** to let it capture supported details you share. Explicit save and update requests still work with auto-save off. |
+| **Correct a saved detail** | Update a matching note in place. For supported contact updates, chat can ask for a missing replacement and accept just that value in the next reply. Confirm the change through **Memory updated** and **Open memory**. |
+| **History** | Reopen recent saved answers and their citations. **Ask again** runs in read-only mode. **New chat** starts a fresh conversation using the same notebook. |
 
-## ✨ Features
+Accounts use Supabase email and password sign-in. Notes and the latest 10 answers shown in **History** belong to the signed-in account. History stores individual answers and their evidence. The active chat thread lives in the browser.
 
-| Feature                     | Description                                                                  |
-| --------------------------- | ---------------------------------------------------------------------------- |
-| 🔐 **Authentication**       | Email/password sign-up & login via Supabase Auth                             |
-| 📝 **Add + Edit Memories**  | Create, update, and delete memories with automatic re-embedding              |
-| 🏷️ **Tagging**              | Add tags to memories and filter your notes by tag/search                     |
-| 🔍 **Vector Search**        | Semantic retrieval using local BGE embeddings + pgvector cosine similarity |
-| 🤖 **RAG Q&A**              | Ask questions and get excerpts verified against your stored notes           |
-| 💬 **Chat Memory**          | Save facts or correct a stored value from chat and open the updated note     |
-| 📌 **Source Evidence**      | Answers include source notes and evidence snippets with term highlighting    |
-| 🕘 **Question History**     | Reopen saved answers or rerun a question in read-only mode                   |
-| 👤 **Multi-user Isolation** | RLS policies ensure each user only accesses their own memories               |
-| 🛡️ **Provider Resilience**  | Contact updates and exact recall work during a model outage                  |
+## Try a chat update
 
----
+1. Select **Add memory** and save a note containing `Phone: 202-555-0101`.
+2. Ask `What is my phone number?` and open the cited note.
+3. Send `Change my phone number`. When chat asks for the new number, reply `202-555-0102` in the same chat.
+4. Select **Open memory** in the **Memory updated** confirmation. Start a **New chat** and ask for the number again to check that the updated value persists.
 
-## 🏗️ Architecture
+## How it works
 
 ```mermaid
-flowchart LR
-    Chat[Chat message] --> Intent[Parse contact facts or validate a model plan]
-    Intent --> Write[Apply an owned row change]
-    Write --> Receipt[Verify the returned row and issue a receipt]
-    Intent --> Read[Resolve a separate question]
-    Read --> Exact[Read a labeled contact value]
-    Read --> Retrieve[Retrieve with local BGE and pgvector or keywords]
-    Retrieve --> Select[Model selects exact excerpts]
-    Select --> Check[Verify excerpts against the supplied sources]
-    Check --> Reply[Server assembles the reply and source links]
-    Exact --> Reply
-    Receipt --> Reply
-    Reply --> History[Save answer and receipts to account history]
+flowchart TD
+    Message["Chat message"] --> Intent["Identify a question, save request, or edit"]
+    Intent -->|Question| Search["Look up a contact or retrieve relevant notes"]
+    Search -->|Relevant notes| Evidence["Validate excerpts against their sources"]
+    Search -->|Exact contact value| Reply
+    Intent -->|Save or edit| Write["Apply and verify the database change"]
+    Evidence --> Reply["Return citations or a memory receipt"]
+    Write --> Reply
+    Reply --> History["Save the answer and sources to account history"]
 ```
 
-The API can answer a question and apply a separate update in the same turn. Existing note edits use an optimistic database check so a chat request cannot overwrite an intervening manual edit. When OpenRouter is unavailable, general questions show matching source notes and exact contact operations use the notebook directly.
+- **Retrieval** uses local ONNX inference to create 384-dimensional BGE embeddings and pgvector cosine similarity to find relevant notes. Keyword search can find notes when vector retrieval is unavailable or a note has no embedding.
+- **Answers** use OpenRouter to select relevant excerpts. The server checks that cited excerpts occur in the referenced notes. It can show matching note previews if the model is unavailable, and supported labeled phone and email lookups work without OpenRouter.
+- **Writes** change the matched database row. A pending contact correction keeps a snapshot of its target note. If the note changes before the reply arrives, the edit is rejected so a newer value is preserved. A combined message can update a note and ask a separate question.
 
-### Tech Stack
+The app uses Next.js 14, React 18, TypeScript, and Tailwind CSS. Supabase provides Auth, PostgreSQL, and pgvector. ONNX Runtime runs the [bundled BGE model](src/models/bge-small-en-v1.5), OpenRouter provides model inference, and Vercel hosts the app.
 
-| Layer            | Technology                                      |
-| ---------------- | ----------------------------------------------- |
-| **Frontend**     | Next.js 14 (App Router), React 18, Tailwind CSS |
-| **Backend**      | Next.js API Routes                              |
-| **Auth**         | Supabase Auth (email/password)                  |
-| **Database**     | Supabase PostgreSQL                             |
-| **Vector Store** | Supabase pgvector (cosine similarity)           |
-| **Embeddings**   | ONNX Runtime, `BAAI/bge-small-en-v1.5` (384 dims) |
-| **LLM Gateway**  | OpenRouter                                      |
-| **Deployment**   | Vercel                                          |
+Supabase row-level security scopes `memories` and `query_history` to the signed-in user. The app computes embeddings on the server. Model-backed requests may send the question and relevant note excerpts to OpenRouter. Keep the OpenRouter key server-side.
 
-### Data Model (Current)
+## Run locally
 
-```sql
-Table: public.memories
-┌─────────────┬──────────────────┬───────────────────────────────────────────────┐
-│ Column      │ Type             │ Notes                                         │
-├─────────────┼──────────────────┼───────────────────────────────────────────────┤
-│ id          │ uuid             │ Primary key (gen_random_uuid)                 │
-│ user_id     │ uuid             │ FK -> auth.users (CASCADE DELETE)             │
-│ title       │ text             │ Optional memory title                          │
-│ content     │ text             │ Full note content                              │
-│ tags        │ text[]           │ Optional tags (default '{}')                  │
-│ embedding   │ vector(384)      │ BGE embedding output                           │
-│ created_at  │ timestamptz      │ Auto-set on insert                             │
-└─────────────┴──────────────────┴───────────────────────────────────────────────┘
-```
+Use Node.js 24, npm, a Supabase project, and an OpenRouter key for model-backed features.
 
----
-
-## 🚀 Getting Started
-
-### Prerequisites
-
-- **Node.js** 18+ and **npm**
-- A **Supabase** project ([free tier](https://supabase.com) works)
-- An **OpenRouter** API key
-
----
-
-### 1) Clone & Install
+### 1. Install dependencies
 
 ```bash
 git clone https://github.com/kudala-bharani/ai-second-brain.git
 cd ai-second-brain
-npm install
+npm ci
+cp .env.local.example .env.local
 ```
 
----
+### 2. Set up Supabase
 
-### 2) Configure Environment Variables
+In a fresh project's SQL Editor, run [`supabase/schema.sql`](supabase/schema.sql) once. It creates the notes, history, ownership policies, and vector search function. [`migration_feature_upgrade.sql`](supabase/migration_feature_upgrade.sql) is for older databases that lack those features.
 
-Copy `.env.local.example` to `.env.local` and set:
+Give authenticated sessions the table access that the app needs for the Data API. The schema's row-level security policies continue to enforce ownership. [Supabase Data API grants](https://supabase.com/changelog/45329-breaking-change-tables-not-exposed-to-data-and-graphql-api-automatically)
 
-```env
-NEXT_PUBLIC_SUPABASE_URL=https://your-project-ref.supabase.co
-NEXT_PUBLIC_SUPABASE_ANON_KEY=your-supabase-anon-key
-OPENROUTER_API_KEY=sk-or-v1-your-openrouter-key
-NEXT_PUBLIC_APP_URL=http://localhost:3000
+```sql
+grant select, insert, update, delete on table public.memories to authenticated;
+grant select, insert on table public.query_history to authenticated;
 ```
 
-Where to get them:
+If email confirmation is enabled, add `http://localhost:3000/auth/callback` to the Supabase redirect allowlist. For a hosted deployment, set **Site URL** to your public origin and add its exact `/auth/callback` URL as well. Keep the default confirmation email template. [Supabase redirect settings](https://supabase.com/docs/guides/auth/redirect-urls)
 
-| Variable                        | Location                                                                 |
-| ------------------------------- | ------------------------------------------------------------------------ |
-| `NEXT_PUBLIC_SUPABASE_URL`      | Supabase Dashboard -> Project Settings -> API                            |
-| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Supabase Dashboard -> Project Settings -> API (`anon` key)               |
-| `OPENROUTER_API_KEY`            | [openrouter.ai/keys](https://openrouter.ai/keys)                         |
+### 3. Configure the app
 
----
+Set these values in `.env.local`. [Example environment file](.env.local.example)
 
-### 3) Set Up Database
+| Variable | Value |
+| --- | --- |
+| `NEXT_PUBLIC_SUPABASE_URL` | Your Supabase project URL |
+| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | The project's public API key, either publishable or legacy anon |
+| `OPENROUTER_API_KEY` | Your [OpenRouter key](https://openrouter.ai/keys) |
+| `OPENROUTER_MODELS` | Optional comma-separated model IDs that support structured output. Defaults to `openrouter/free`. |
+| `NEXT_PUBLIC_APP_URL` | Optional app origin used for OpenRouter request attribution. Defaults to `http://localhost:3000`. |
 
-In Supabase SQL editor, run:
-
-1. `supabase/schema.sql`
-2. `supabase/migration_feature_upgrade.sql` (required for latest memory editing/tags/security updates)
-
-`migration_feature_upgrade.sql` includes:
-
-- `tags` column on `memories`
-- `UPDATE` RLS policy for own memories
-- Hardened `match_memories` (bound to `auth.uid()`)
-
----
-
-### 4) Run Locally
+### 4. Start the app
 
 ```bash
 npm run dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000)
+Open [http://localhost:3000](http://localhost:3000). For Vercel, set the same environment variables in the project and use the deployment origin for `NEXT_PUBLIC_APP_URL`.
 
----
+## Tests
 
-## Try the chat workflow
+`npm test` runs the chat regression suite with synthetic notebook records and mocked database, embedding, and model calls. It covers follow-up corrections, retries, stale notes, read-only history, provider outages, and false write confirmations.
 
-1. Add a note with `Phone: 2025550101` in the body. The title can be blank.
-2. Ask “What is my phone number?” and open the source from the answer.
-3. Send `I changed to a new number, this is my current number "2025550102"`. Open the receipt to inspect the edited note.
-4. Start a new chat and ask the same question. The answer comes from the saved value.
+`npm run build` creates a production build. After starting the app, `GET /api/test-embedding` checks that the local model loads.
 
-## Regression tests
+## API routes
 
-Run `npm test` to exercise the chat pipeline with synthetic notebook records and controlled provider and database responses. The suite checks persistent corrections, idempotent retries, conflicts, provider failures, fabricated confirmations, and automatic capture.
+| Route | Purpose |
+| --- | --- |
+| `GET /api/memories` | List signed-in user's notes |
+| `POST /api/memories` | Add a note |
+| `PATCH /api/memories/:id` | Edit a note and refresh its embedding |
+| `DELETE /api/memories/:id` | Delete a note |
+| `POST /api/query` | Ask a question or request a notebook change |
+| `GET /api/query-history` | Retrieve recent saved answers |
+| `GET /api/test-embedding` | Check local embedding health |
 
-
----
-
-## ⚙️ Configuration Notes
-
-- Embeddings use the existing **384-dimensional BGE model** locally, with CLS pooling and L2 normalization. The checked-in [ONNX export](https://huggingface.co/Xenova/bge-small-en-v1.5/tree/ea104dacec62c0de699686887e3f920caeb4f3e3) is pinned to that model.
-- Each saved answer, source citation, and memory receipt lives in `query_history` under the signed-in account.
-- Set `OPENROUTER_MODELS` to a comma-separated list of preferred models that support structured output. The free router is available as a fallback.
-
----
-
-## 🧪 Useful API Endpoints
-
-| Route                      | Purpose                                   |
-| -------------------------- | ----------------------------------------- |
-| `GET /api/test-embedding`  | Check that the local embedding model loads |
-| `GET /api/memories`        | Fetch user memories                       |
-| `POST /api/memories`       | Create memory (title/content/tags)        |
-| `PATCH /api/memories/:id`  | Edit memory + re-embed                    |
-| `DELETE /api/memories/:id` | Delete memory                             |
-| `POST /api/query`          | Ask a grounded question or change a memory from chat |
-| `GET /api/query-history`  | List answers saved to the signed-in account |
-
----
-
-## 🚢 Deployment (Vercel)
-
-Set these environment variables in Vercel project settings:
-
-- `NEXT_PUBLIC_SUPABASE_URL`
-- `NEXT_PUBLIC_SUPABASE_ANON_KEY`
-- `OPENROUTER_API_KEY`
-- `NEXT_PUBLIC_APP_URL`
-
----
-
-## 📧 Email Verification Setup
-
-After deploying to Vercel, you need to configure Supabase email verification to work with your production domain.
-
-### Quick Setup:
-
-1. **Get your Vercel URL** (e.g., `https://your-app-name.vercel.app`)
-
-2. **Update Supabase Dashboard:**
-   - Go to **Authentication** → **URL Configuration**
-   - Set **Site URL** to your production URL
-   - Add to **Redirect URLs**:
-     ```
-     http://localhost:3000/auth/callback
-     https://your-app-name.vercel.app/auth/callback
-     ```
-
-3. **Update Vercel Environment Variable:**
-   - Add `NEXT_PUBLIC_APP_URL=https://your-app-name.vercel.app`
-
-4. **Test:** Sign up with a new email and verify the link redirects correctly
-
-📖 **Detailed guide:** See [SUPABASE_EMAIL_SETUP.md](./SUPABASE_EMAIL_SETUP.md) for complete instructions, troubleshooting, and multi-environment setup.
-
----
-
-## 🔒 Security
-
-- RLS on `memories` enforces per-user data isolation
-- Server-side user checks in API routes via `supabase.auth.getUser()`
-- Provider keys remain server-side
-- `.env.local` is gitignored and should never be committed
-
----
-
-## 📄 License
+## License
 
 MIT
-
----
-
-<div align="center">
-Built with Next.js, Supabase, OpenRouter, and ONNX Runtime.
-</div>
